@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'">
+  <title>Estantería</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-modo="fondo">
+
+  <div id="escenario">
+    <img id="pared" alt="">
+    <div id="tinta" hidden></div>
+    <img id="estanterias" alt="">
+    <div id="carteles"></div>
+    <div id="baldas"></div>
+    <div id="botellas"></div>
+  </div>
+
+  <div id="barra" role="toolbar" aria-label="Herramientas de la estantería">
+    <span class="marca">Estantería</span>
+
+    <div class="grupo">
+      <select id="escenas" title="Distribución"></select>
+      <button data-accion="escena-nueva" class="icono" title="Nueva distribución">+</button>
+      <button data-accion="escena-renombrar" class="icono" title="Renombrar">✎</button>
+      <button data-accion="escena-borrar" class="icono" title="Borrar distribución">🗑</button>
+    </div>
+
+    <div class="grupo">
+      <button data-accion="nueva" class="primario">Nueva carpeta</button>
+      <button data-accion="poster" class="primario">Nuevo póster</button>
+    </div>
+
+    <div class="grupo">
+      <button data-accion="ordenar-nombre">Por nombre</button>
+      <button data-accion="ordenar-altura">Por altura</button>
+      <button data-accion="repartir">Repartir</button>
+    </div>
+
+    <div class="grupo">
+      <button data-accion="color" id="btn-color">Color</button>
+      <button data-accion="baldas" id="btn-baldas">Ajustar baldas</button>
+    </div>
+
+    <div class="grupo">
+      <button data-accion="bloquear" class="hecho">Listo</button>
+    </div>
+  </div>
+
+  <div id="seleccion" hidden>
+    <span class="titulo" id="sel-nombre"></span>
+    <label class="mini">Tamaño
+      <input id="sel-tam" type="range" min="3" max="100" step="0.5">
+      <output id="sel-num"></output>
+    </label>
+    <label class="mini" id="sel-giro-caja">Giro
+      <input id="sel-giro" type="range" min="-25" max="25" step="1">
+    </label>
+    <label class="mini" id="sel-grosor-caja">Grosor
+      <input id="sel-grosor" type="range" min="50" max="220" step="1">
+    </label>
+    <div class="fila" id="sel-capas">
+      <button data-accion="sel-atras" class="secundario" title="Enviar atrás">▽ Atrás</button>
+      <button data-accion="sel-adelante" class="secundario" title="Traer adelante">△ Adelante</button>
+    </div>
+    <div class="fila">
+      <button data-accion="sel-editar" class="secundario">Editar</button>
+      <button data-accion="sel-guardar" class="secundario">Al cajón</button>
+      <button data-accion="sel-borrar" class="peligro">Eliminar</button>
+    </div>
+  </div>
+
+  <div id="paleta" hidden>
+    <span class="titulo">Color de la pared</span>
+    <div class="muestras" id="paleta-lista"></div>
+    <label class="mini a-medida">A medida <input id="paleta-color" type="color"></label>
+    <label class="mini interruptor">
+      <input id="paleta-botellas" type="checkbox"> Que las botellas acompañen
+    </label>
+    <div class="fila">
+      <span class="hueco"></span>
+      <button data-accion="color-cerrar" class="hecho">Listo</button>
+    </div>
+  </div>
+
+  <div id="cajon" aria-label="Sin colocar en esta distribución">
+    <span class="titulo">Sin colocar</span>
+    <div id="cajon-lista"></div>
+  </div>
+
+  <p id="pista"></p>
+
+  <div id="pregunta" hidden>
+    <form class="caja" id="pregunta-form">
+      <label id="pregunta-txt" for="pregunta-valor">Nombre</label>
+      <small id="pregunta-det" hidden></small>
+      <input id="pregunta-valor" type="text" maxlength="60" autocomplete="off">
+      <div class="fila">
+        <span class="hueco"></span>
+        <button type="button" class="secundario" id="pregunta-no">Cancelar</button>
+        <button type="submit" class="primario" id="pregunta-si">Aceptar</button>
+      </div>
+    </form>
+  </div>
+
+  <nav id="menu" hidden></nav>
+
+  <div id="aviso" hidden></div>
+
+  <script src="botellas.js"></script>
+  <script src="carteles.js"></script>
+  <script src="editor.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

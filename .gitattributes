@@ -1,2 +1,8 @@
-# Auto detect text files and perform LF normalization
+# Normaliza finales de linea en los archivos de texto
 * text=auto
+
+# Binarios: que git no los toque
+*.png  binary
+*.ico  binary
+*.woff2 binary
+*.zip  binary

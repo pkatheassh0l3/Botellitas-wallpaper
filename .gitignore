@@ -1,0 +1,21 @@
+# Dependencias
+node_modules/
+
+# Salida de electron-builder
+dist/
+
+# Copias sueltas del proyecto
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.log
+npm-debug.log*

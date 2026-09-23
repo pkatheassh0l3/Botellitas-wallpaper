@@ -1,0 +1,52 @@
+{
+ "libro-01.png": {
+  "nombre": "Libro 1",
+  "lomo": "#ff8686",
+  "texto": "#ae0000"
+ },
+ "libro-02.png": {
+  "nombre": "Libro 2",
+  "lomo": "#db9952",
+  "texto": "#4a2c0c"
+ },
+ "libro-03.png": {
+  "nombre": "Libro 3",
+  "lomo": "#1c334d",
+  "texto": "#829dbc"
+ },
+ "libro-04.png": {
+  "nombre": "Libro 4",
+  "lomo": "#52949e",
+  "texto": "#dde7e8"
+ },
+ "libro-05.png": {
+  "nombre": "Libro 5",
+  "lomo": "#a63c38",
+  "texto": "#e5cfce"
+ },
+ "libro-06.png": {
+  "nombre": "Libro 6",
+  "lomo": "#ffc45f",
+  "texto": "#875500"
+ },
+ "libro-07.png": {
+  "nombre": "Libro 7",
+  "lomo": "#ff8686",
+  "texto": "#ae0000"
+ },
+ "libro-08.png": {
+  "nombre": "Libro 8",
+  "lomo": "#52949e",
+  "texto": "#dde7e8"
+ },
+ "libro-09.png": {
+  "nombre": "Libro 9",
+  "lomo": "#a63c38",
+  "texto": "#e5cfce"
+ },
+ "libro-10.png": {
+  "nombre": "Libro 10",
+  "lomo": "#1c334d",
+  "texto": "#829dbc"
+ }
+}

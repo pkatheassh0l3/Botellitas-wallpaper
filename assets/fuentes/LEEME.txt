@@ -1,0 +1,5 @@
+Cinzel y Libre Baskerville, de Google Fonts, bajo licencia SIL Open Font 1.1.
+Se empaquetan con la app para que funcione sin conexion.
+
+  Cinzel            https://fonts.google.com/specimen/Cinzel
+  Libre Baskerville https://fonts.google.com/specimen/Libre+Baskerville

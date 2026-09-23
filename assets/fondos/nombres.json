@@ -1,0 +1,30 @@
+{
+ "amarillo.png": {
+  "nombre": "Amarillo",
+  "color": "#ffe389"
+ },
+ "rosa.png": {
+  "nombre": "Rosa",
+  "color": "#ffcdf2"
+ },
+ "celeste.png": {
+  "nombre": "Celeste",
+  "color": "#86ceea"
+ },
+ "azul.png": {
+  "nombre": "Azul",
+  "color": "#0069ac"
+ },
+ "verde.png": {
+  "nombre": "Verde",
+  "color": "#94c776"
+ },
+ "lila.png": {
+  "nombre": "Lila",
+  "color": "#f4c9fe"
+ },
+ "morado.png": {
+  "nombre": "Morado",
+  "color": "#6e028b"
+ }
+}

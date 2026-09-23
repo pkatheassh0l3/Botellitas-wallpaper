@@ -1,0 +1,95 @@
+{
+  "name": "estanteria-wallpaper",
+  "productName": "Estanteria",
+  "version": "1.0.0",
+  "description": "Un escritorio con forma de estanteria: tus carpetas son botellas.",
+  "main": "main.js",
+  "author": "Esther",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "ventana": "electron . --ventana",
+    "depurar": "electron . --ventana --depurar",
+    "build": "electron-builder",
+    "carpeta": "electron-builder --dir",
+    "portable": "electron-builder --win portable",
+    "release": "electron-builder --win --publish always",
+    "version:patch": "npm version patch && git push --follow-tags",
+    "version:minor": "npm version minor && git push --follow-tags",
+    "version:major": "npm version major && git push --follow-tags"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "optionalDependencies": {
+    "koffi": "^2.9.0"
+  },
+  "build": {
+    "appId": "com.esther.estanteria",
+    "productName": "Estanteria",
+    "artifactName": "Estanteria-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "win-wallpaper.js",
+      "renderer/**",
+      "assets/**"
+    ],
+    "asarUnpack": [
+      "assets/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Estantería",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.png",
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png",
+      "category": "Utility"
+    },
+    "portable": {
+      "artifactName": "Estanteria-portable-${version}.exe"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
