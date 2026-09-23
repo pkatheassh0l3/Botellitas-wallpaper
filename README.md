@@ -535,6 +535,12 @@ construye en Windows el instalador y la versión portable y los cuelga en
 
 Anota lo que cambia en `CHANGELOG.md` antes de lanzar la versión.
 
+**Solo el instalador, sin publicar versión.** La action *Crear instalador*
+(`.github/workflows/instalador.yml`) construye el instalador y la versión
+portable cada vez que subes cambios a `main`, y también se puede lanzar a mano:
+pestaña **Actions → Crear instalador → Run workflow**. Al terminar, los `.exe`
+están en el apartado **Artifacts** de esa ejecución, durante 30 días.
+
 ## Estructura
 
 ```
