@@ -222,6 +222,9 @@ mover o borrar el archivo original sin romper la botella.
 
 - **Ctrl+Alt+E** (o el icono de la bandeja) alterna entre estantería bloqueada y
   modo edición. **Esc** deselecciona; otra vez, bloquea.
+- **Sin desbloquear** también puedes arrastrar una botella a otra balda o a la
+  papelera. Un clic o doble clic la abre como siempre: solo se mueve si la
+  arrastras. Para tamaños, capas, pósters y baldas sí hace falta el modo edición.
 - **Clic** selecciona. Lo seleccionado sale con borde discontinuo, un asa para
   el tamaño y un panel abajo a la izquierda.
 - Al pasar el ratón, la botella se ilumina y sube un poco, además de enseñar su

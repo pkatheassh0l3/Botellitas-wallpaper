@@ -128,6 +128,9 @@ html, body {
 }
 
 body[data-modo="editar"] .botella { cursor: grab; }
+/* Fuera del modo edición también se pueden arrastrar, pero sin cambiar el
+   cursor: sigue pareciendo el escritorio. */
+body:not([data-modo="editar"]) .botella.arrastrando { cursor: grabbing; }
 
 .botella.arrastrando {
   cursor: grabbing;

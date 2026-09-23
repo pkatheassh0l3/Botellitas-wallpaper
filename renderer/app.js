@@ -809,7 +809,8 @@ const confirmar = (titulo, detalle) => dialogo({ titulo, detalle, aceptarTxt: 'S
 let arrastre = null;
 
 function alPulsar(e) {
-  if (modo !== 'editar' || ajustandoBaldas || e.button !== 0 || Editor.abierto()) return;
+  if (ajustandoBaldas || e.button !== 0 || Editor.abierto()) return;
+  if (modo !== 'editar') { arrastrarEnFondo(e); return; }
   e.preventDefault();
   e.stopPropagation();
 
@@ -1446,12 +1447,22 @@ function clicPrestado(c) {
 
   const id = objetoEn(c);
   if (c.doble && id) { alAbrir(id); return; }
-  if (!id || esPoster(id) || id === PAPELERA) return;
+  empezarArrastreFondo(id, c);
+}
+
+/**
+ * Prepara el arrastre de una botella sin estar en modo edición. No se mueve
+ * nada hasta pasar de UMBRAL_PX, así que un clic o un doble clic siguen
+ * abriendo la carpeta como siempre.
+ */
+function empezarArrastreFondo(id, c) {
+  if (!id || esPoster(id)) return;
 
   const s = sitio(id);
   if (!s || !s.balda) return;
 
   const el = nodos.get(id);
+  if (!el) return;
   const caja = el.getBoundingClientRect();
   arrastreP = {
     id,
@@ -1464,6 +1475,31 @@ function clicPrestado(c) {
   };
 }
 
+/**
+ * Arrastre con el ratón de verdad, fuera del modo edición. Pasa en las capas
+ * que sí reciben ratón ('Sobre los iconos', 'Suelta', 'Como ventana'); en
+ * 'Detrás de los iconos' el mismo arrastre llega por clicPrestado.
+ */
+function arrastrarEnFondo(e) {
+  const el = e.currentTarget;
+  const punto = (ev) => ({ x: ev.clientX, y: ev.clientY });
+  empezarArrastreFondo(el.dataset.id, punto(e));
+  if (!arrastreP) return;
+
+  try { el.setPointerCapture(e.pointerId); } catch (_) { /* nada */ }
+  const mover = (ev) => moverPrestado(punto(ev));
+  const soltar = (ev) => {
+    el.removeEventListener('pointermove', mover);
+    el.removeEventListener('pointerup', soltar);
+    el.removeEventListener('pointercancel', soltar);
+    try { el.releasePointerCapture(ev.pointerId); } catch (_) { /* nada */ }
+    soltarPrestado(punto(ev));
+  };
+  el.addEventListener('pointermove', mover);
+  el.addEventListener('pointerup', soltar);
+  el.addEventListener('pointercancel', soltar);
+}
+
 /** Llega desde el seguimiento del cursor mientras el botón sigue pulsado. */
 function moverPrestado(p) {
   const a = arrastreP;
@@ -1472,6 +1508,7 @@ function moverPrestado(p) {
   if (!a.movida) {
     if (Math.abs(p.x - a.inicio.x) < UMBRAL_PX && Math.abs(p.y - a.inicio.y) < UMBRAL_PX) return true;
     a.movida = true;
+    resaltar(null);
     a.el.classList.add('arrastrando');
     a.el.style.height = `${a.alto}px`;
     seleccionar(a.id);
@@ -1482,7 +1519,7 @@ function moverPrestado(p) {
 
   const pap = nodos.get(PAPELERA);
   a.enPapelera = false;
-  if (pap && sitio(PAPELERA)) {
+  if (pap && a.id !== PAPELERA && sitio(PAPELERA)) {
     const r = pap.getBoundingClientRect();
     a.enPapelera = p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
     pap.classList.toggle('destino', a.enPapelera);

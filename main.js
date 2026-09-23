@@ -47,6 +47,9 @@ const dirEtiquetas = () => path.join(app.getPath('userData'), 'etiquetas');
 // --- Errores ------------------------------------------------------------
 
 const DEPURAR = process.argv.includes('--depurar');
+// La lanza Windows al iniciar sesión (tarea programada o clave del registro).
+const ARG_ARRANQUE = '--arranque';
+const INICIO = Date.now();
 
 function contarError(donde, err) {
   const texto = `${donde}: ${err && err.stack ? err.stack : err}`;
@@ -99,6 +102,7 @@ const AJUSTES_POR_DEFECTO = {
 };
 
 let ajustes = { ...AJUSTES_POR_DEFECTO };
+let anclajeReal = AJUSTES_POR_DEFECTO.anclaje;   // la última capa que no es 'ventana'
 
 function leerAjustes() {
   try {
@@ -113,6 +117,12 @@ function leerAjustes() {
     ajustes.version = AJUSTES_VERSION;
     guardarAjustes();
   }
+  // Ajustes de versiones anteriores que sí guardaban 'ventana'.
+  if (ajustes.anclaje === 'ventana') {
+    ajustes.anclaje = AJUSTES_POR_DEFECTO.anclaje;
+    guardarAjustes();
+  }
+  anclajeReal = ajustes.anclaje;
   if (process.argv.includes('--ventana')) ajustes.anclaje = 'ventana';
   if (!['detras', 'encima', 'suelta', 'ventana'].includes(ajustes.anclaje)) {
     ajustes.anclaje = AJUSTES_POR_DEFECTO.anclaje;
@@ -124,7 +134,11 @@ function leerAjustes() {
 
 function guardarAjustes() {
   try {
-    escribirSeguro(ficheroAjustes(), JSON.stringify(ajustes, null, 2));
+    // 'Como ventana' es para probar: si se guardara, la próxima vez que
+    // enciendas el ordenador se abriría en modo edición. Se guarda la capa real.
+    const aGuardar = { ...ajustes };
+    if (aGuardar.anclaje === 'ventana') aGuardar.anclaje = anclajeReal;
+    escribirSeguro(ficheroAjustes(), JSON.stringify(aGuardar, null, 2));
   } catch (err) {
     console.error('[estanteria] No se pudieron guardar los ajustes:', err.message);
   }
@@ -178,10 +192,13 @@ function schtasks(args) {
 
 async function arranqueAutomatico(activar) {
   if (process.platform !== 'win32') {
-    app.setLoginItemSettings({ openAtLogin: activar, args: [] });
+    app.setLoginItemSettings({ openAtLogin: activar, args: [ARG_ARRANQUE] });
     return activar;
   }
-  const clave = { openAtLogin: false, path: ejecutableArranque(), args: [] };
+  const clave = { openAtLogin: false, path: ejecutableArranque(), args: [ARG_ARRANQUE] };
+  // Las versiones anteriores registraban la clave sin la marca: se quita,
+  // porque si no al encender se abrían dos copias.
+  app.setLoginItemSettings({ openAtLogin: false, path: ejecutableArranque(), args: [] });
 
   if (!activar) {
     await schtasks(['/Delete', '/TN', TAREA, '/F']);
@@ -192,7 +209,7 @@ async function arranqueAutomatico(activar) {
   const ok = await schtasks([
     '/Create', '/F',
     '/TN', TAREA,
-    '/TR', `"${ejecutableArranque()}"`,
+    '/TR', `"${ejecutableArranque()}" ${ARG_ARRANQUE}`,
     '/SC', 'ONLOGON',
     '/DELAY', '0000:00',    // sin esperar: de los primeros en salir
     '/RL', 'LIMITED',       // sin privilegios: si no, no podría anclarse al escritorio
@@ -396,7 +413,9 @@ function alEscritorio() {
         // app sale antes que el Explorador y el escritorio aún no existe.
         anclada = false;
         ultimoFalloAnclaje = err.message;
-        win.show();
+        // Sin robar el foco ni ponerse delante: sigue siendo el fondo.
+        win.showInactive();
+        conWinApi('bajarAlFondo', win);
         programarReintento();
       }
     }
@@ -508,6 +527,7 @@ function aplicarModo(nuevo) {
 
 function cambiarAnclaje(nuevo) {
   if (ajustes.anclaje === nuevo) return;
+  if (nuevo !== 'ventana') anclajeReal = nuevo;
   const reiniciar = process.platform === 'linux';  // el tipo de ventana no se cambia en caliente
   ajustes.anclaje = nuevo;
   guardarAjustes();
@@ -1375,7 +1395,15 @@ if (!app.requestSingleInstanceLock()) {
     + '                Si no la ves, busca su icono en la bandeja del sistema, junto al reloj.');
   app.quit();
 } else {
-  app.on('second-instance', () => aplicarModo('editar'));
+  /* Abrir la app a mano cuando ya está en marcha la desbloquea: es la forma de
+     encontrarla. Pero al encender el ordenador pueden lanzarse dos copias a la
+     vez (la tarea programada y la clave del registro, o una tarea de una
+     versión anterior), y la segunda abría el modo edición. Esas se ignoran. */
+  app.on('second-instance', (_e, argv) => {
+    const automatica = argv.includes(ARG_ARRANQUE) || Date.now() - INICIO < 90000;
+    if (automatica || !win || win.isDestroyed()) return;
+    aplicarModo('editar');
+  });
 
   app.whenReady().then(() => {
     leerAjustes();

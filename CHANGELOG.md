@@ -5,7 +5,11 @@ Versiones: [SemVer](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
+### Cambiado
+- Las botellas se pueden arrastrar de una balda a otra sin entrar en el modo edición. Un clic o doble clic sigue abriendo la carpeta; solo se mueven al arrastrar más de unos píxeles.
+
 ### Corregido
+- Al encender el ordenador ya no se abre el modo edición: se ignoran las copias que lanza Windows al iniciar sesión, «Como ventana» ya no se queda guardada, y mientras espera al Explorador no se pone delante de las demás ventanas.
 - La capa «Suelta, sin anclar» se perdía al reiniciar y volvía a «Sobre los iconos».
 - El arranque automático de la versión portable apuntaba a una carpeta temporal.
 - El estado y los ajustes se guardan de forma segura (sin JSON a medias tras un corte) y con copia `.bak`.
