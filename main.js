@@ -31,6 +31,42 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
+/* En Linux, Wayland no deja a una aplicación colocarse como fondo de escritorio
+   ni por debajo de otras ventanas. Por XWayland (X11) sí: la ventana de tipo
+   'desktop' y el "siempre al fondo" funcionan también en GNOME y KDE con
+   Wayland. Quien quiera probar Wayland puede lanzar con --ozone-platform=wayland. */
+if (process.platform === 'linux' && !process.argv.some((a) => a.startsWith('--ozone-platform'))) {
+  app.commandLine.appendSwitch('ozone-platform', 'x11');
+}
+
+// --- Linux ----------------------------------------------------------------
+
+const ES_LINUX = process.platform === 'linux';
+
+/** Lanza el primer programa de la lista que exista. Devuelve si alguno arrancó. */
+function lanzarPrimero(opciones, cwd) {
+  return new Promise((res) => {
+    const probar = (i) => {
+      if (i >= opciones.length) { res(false); return; }
+      const [cmd, ...args] = opciones[i];
+      let hijo;
+      try {
+        hijo = spawn(cmd, args, { cwd, detached: true, stdio: 'ignore' });
+      } catch (_) { probar(i + 1); return; }
+      hijo.once('error', () => probar(i + 1));
+      hijo.once('spawn', () => { hijo.unref(); res(true); });
+    };
+    probar(0);
+  });
+}
+
+/** Ejecuta un programa y dice si terminó bien (sin mirar su salida). */
+function ejecutar(cmd, args, timeout = 8000) {
+  return new Promise((res) => {
+    execFile(cmd, args, { timeout }, (err) => res(!err));
+  });
+}
+
 // --- Rutas -------------------------------------------------------------
 
 const DIR_ASSETS = path.join(__dirname, 'assets');
@@ -180,7 +216,42 @@ const TAREA = 'Estanteria';
  * algo que desaparece al cerrar: el .exe de verdad viene en esta variable.
  */
 function ejecutableArranque() {
-  return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+  // En Linux, el AppImage se monta en una carpeta temporal; el archivo de
+  // verdad viene en APPIMAGE.
+  return process.env.PORTABLE_EXECUTABLE_FILE || process.env.APPIMAGE || process.execPath;
+}
+
+/**
+ * Linux no tiene clave de registro: el estándar (XDG) es dejar un .desktop en
+ * ~/.config/autostart. Lo entienden GNOME, KDE, XFCE, Cinnamon, MATE…
+ * setLoginItemSettings de Electron no hace nada en Linux.
+ */
+function arranqueLinux(activar) {
+  const dir = path.join(app.getPath('appData'), 'autostart');
+  const fichero = path.join(dir, 'estanteria.desktop');
+  try {
+    if (!activar) {
+      fs.rmSync(fichero, { force: true });
+      return false;
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    const exe = ejecutableArranque().replace(/(["`$\\])/g, '\\$1');
+    fs.writeFileSync(fichero, [
+      '[Desktop Entry]',
+      'Type=Application',
+      'Name=Estantería',
+      'Comment=Un escritorio con forma de estantería',
+      `Exec="${exe}" ${ARG_ARRANQUE}`,
+      'X-GNOME-Autostart-enabled=true',
+      'X-GNOME-Autostart-Delay=2',
+      'Terminal=false',
+      '',
+    ].join('\n'), 'utf8');
+    return true;
+  } catch (err) {
+    contarError('No se pudo configurar el arranque automático', err);
+    return false;
+  }
 }
 
 function schtasks(args) {
@@ -191,6 +262,7 @@ function schtasks(args) {
 }
 
 async function arranqueAutomatico(activar) {
+  if (ES_LINUX) return arranqueLinux(activar);
   if (process.platform !== 'win32') {
     app.setLoginItemSettings({ openAtLogin: activar, args: [ARG_ARRANQUE] });
     return activar;
@@ -234,7 +306,7 @@ let tray = null;
 let modo = 'fondo';        // 'fondo' | 'editar'
 let anclada = false;
 let winApi = null;         // helper nativo de Windows
-const WIN_API_ESPERADA = 5;
+const WIN_API_ESPERADA = 6;
 
 /**
  * Carga el ayudante nativo una sola vez y comprueba que trae lo que esperamos.
@@ -295,7 +367,7 @@ function cajaFisica() {
 }
 
 function crearVentana() {
-  const { bounds } = screen.getPrimaryDisplay();
+  const bounds = pantallaPrincipal();
 
   win = new BrowserWindow({
     x: bounds.x,
@@ -313,7 +385,8 @@ function crearVentana() {
     show: false,
     backgroundColor: '#FFE58B',
     // En X11 esto coloca la ventana en la capa del escritorio ya al crearla.
-    type: process.platform === 'linux' && ajustes.anclaje === 'detras' ? 'desktop' : undefined,
+    type: ES_LINUX && ajustes.anclaje === 'detras' ? 'desktop' : undefined,
+    icon: ES_LINUX ? path.join(__dirname, 'build', 'icon.png') : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -419,8 +492,12 @@ function alEscritorio() {
         programarReintento();
       }
     }
-  } else if (process.platform === 'linux' && ajustes.anclaje !== 'detras') {
-    pedirAbajoX11();
+  } else if (ES_LINUX) {
+    win.setBounds(pantallaPrincipal());
+    win.showInactive();
+    // 'detras' ya se creó como ventana de escritorio; 'encima' y 'suelta' son
+    // una ventana normal que se pide al gestor de ventanas mantener al fondo.
+    if (ajustes.anclaje !== 'detras') pedirAbajoX11();
   }
 
   // macOS y respaldo general: ventana normal que no se trae al frente.
@@ -477,15 +554,34 @@ function vigilarCapa(activo) {
  */
 function despertar() {
   if (!win || win.isDestroyed()) return;
-  const b = win.getBounds();
+  const avisarMedidas = () => win.webContents.send('estanteria:medir');
+
+  // Anclada en Windows, las medidas se piden a Windows en píxeles físicos:
+  // setBounds de Electron trabaja en píxeles lógicos y con escalado (lo normal
+  // por encima de 1080p) dejaba la ventana a medio tamaño, en una esquina.
+  if (anclada && process.platform === 'win32' && conWinApi('ajustar', win, true)) {
+    setTimeout(() => {
+      if (!win || win.isDestroyed()) return;
+      conWinApi('ajustar', win, false);
+      win.webContents.invalidate?.();
+      avisarMedidas();
+    }, 40);
+    return;
+  }
+
+  const b = pantallaPrincipal();
   win.setBounds({ ...b, height: b.height - 1 });
   setTimeout(() => {
     if (win && !win.isDestroyed()) {
       win.setBounds(b);
       win.webContents.invalidate?.();
+      avisarMedidas();
     }
   }, 40);
 }
+
+/** La pantalla principal entera, en píxeles lógicos (lo que usa Electron). */
+const pantallaPrincipal = () => ({ ...screen.getPrimaryDisplay().bounds });
 
 function alFrente() {
   clearInterval(relojCapa);
@@ -494,15 +590,30 @@ function alFrente() {
   // Volvemos a permitir que tome el foco: si no, no se puede ni escribir.
   conWinApi('noActivar', win, false);
   win.setFocusable(true);
+  win.setBounds(pantallaPrincipal());
   win.setAlwaysOnTop(true);
   win.show();
   win.focus();
+  win.webContents.send('estanteria:medir');
 }
 
-/** En X11, marcar la ventana como _NET_WM_STATE_BELOW si hay herramientas. */
+/**
+ * En X11, marcar la ventana como _NET_WM_STATE_BELOW (siempre al fondo) y que
+ * no salga en el cambiador de ventanas. Se hace por su identificador, no por
+ * el título, que con la tilde no siempre casaba.
+ */
 function pedirAbajoX11() {
-  execFile('wmctrl', ['-r', 'Estantería', '-b', 'add,below'], (err) => {
-    if (err) console.warn('[estanteria] wmctrl no disponible; la ventana no se mantendra al fondo.');
+  let id = null;
+  try {
+    const buf = win.getNativeWindowHandle();
+    id = `0x${(buf.length >= 8 ? Number(buf.readBigUInt64LE()) : buf.readUInt32LE()).toString(16)}`;
+  } catch (_) { /* sin identificador, por el título */ }
+  const quien = id ? ['-i', '-r', id] : ['-r', 'Estantería'];
+  execFile('wmctrl', [...quien, '-b', 'add,below,skip_pager,skip_taskbar'], (err) => {
+    if (err) {
+      console.warn('[estanteria] wmctrl no esta instalado: la ventana puede ponerse delante de otras. '
+        + 'Instalalo (sudo apt install wmctrl) o usa la capa "Detras de los iconos".');
+    }
   });
 }
 
@@ -535,8 +646,14 @@ function cambiarAnclaje(nuevo) {
   if (reiniciar) {
     dialog.showMessageBox({
       type: 'info',
-      message: 'Reinicia la estantería',
-      detail: 'En Linux la capa se elige al abrir la ventana. Cierra y vuelve a abrir la app para aplicarlo.',
+      message: 'Hay que reiniciar la estantería',
+      detail: 'En Linux la capa se elige al abrir la ventana.',
+      buttons: ['Reiniciar ahora', 'Más tarde'],
+    }).then((r) => {
+      if (r.response !== 0) return;
+      app.saliendo = true;
+      app.relaunch({ execPath: process.env.APPIMAGE || process.execPath });
+      app.exit(0);
     });
     return;
   }
@@ -572,7 +689,9 @@ function vigilarCursor(activo) {
 
   reloj = setInterval(() => {
     const p = screen.getCursorScreenPoint();
-    const b = win.getBounds();
+    // Anclada, getBounds de una ventana hija no es fiable: la ventana ocupa
+    // siempre la pantalla principal, así que medimos desde ahí.
+    const b = anclada ? pantallaPrincipal() : win.getBounds();
     const local = { x: p.x - b.x, y: p.y - b.y };
 
     if (!anterior || p.x !== anterior.x || p.y !== anterior.y) {
@@ -585,7 +704,10 @@ function vigilarCursor(activo) {
     // Solo hacemos caso a los botones si de verdad estás sobre el escritorio.
     const izq = conWinApi('pulsado', 'izq');
     const der = conWinApi('pulsado', 'der');
-    const valido = conWinApi('enElEscritorio', p, win) === true;
+    // Windows pregunta en píxeles físicos; el cursor de Electron viene en
+    // lógicos. Sin convertir, con escalado se miraba otro punto de la pantalla.
+    const fisico = process.platform === 'win32' ? screen.dipToScreenPoint(p) : p;
+    const valido = conWinApi('enElEscritorio', fisico, win) === true;
 
     if (izq && !izqAntes && valido) {
       const ahora = Date.now();
@@ -630,6 +752,18 @@ function leerCarpetas() {
     .filter((e) => !e.name.startsWith('.') && e.name.toLowerCase() !== 'desktop.ini')
     .map((e) => {
       const ext = path.extname(e.name).toLowerCase();
+      const ruta = path.join(dir, e.name);
+      // Los accesos directos en Linux y macOS suelen ser enlaces simbólicos.
+      if (e.isSymbolicLink()) {
+        try {
+          const dest = fs.statSync(ruta);
+          if (dest.isDirectory()) return { ruta, nombre: e.name, tipo: 'carpeta' };
+          return { ruta, nombre: path.basename(e.name, ext), tipo: 'acceso' };
+        } catch (_) {
+          return null;   // enlace roto
+        }
+      }
+      if (ext === '.desktop') return { ruta, nombre: nombreDesktop(ruta) || path.basename(e.name, ext), tipo: 'acceso' };
       if (e.isDirectory()) {
         return { ruta: path.join(dir, e.name), nombre: e.name, tipo: 'carpeta' };
       }
@@ -640,6 +774,24 @@ function leerCarpetas() {
     })
     .filter(Boolean)
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+}
+
+/**
+ * El nombre visible de un lanzador .desktop está dentro del archivo (Name=),
+ * en el idioma del sistema si lo trae: "firefox.desktop" se ve como "Firefox".
+ */
+function nombreDesktop(fichero) {
+  try {
+    const texto = fs.readFileSync(fichero, 'utf8');
+    const seccion = texto.split(/^\[/m).find((s) => s.startsWith('Desktop Entry]')) || texto;
+    const idioma = (app.getLocale() || 'es').replace('-', '_');
+    const corto = idioma.split('_')[0];
+    for (const clave of [`Name[${idioma}]`, `Name[${corto}]`, 'Name']) {
+      const m = seccion.match(new RegExp(`^${clave.replace(/[[\]]/g, '\\$&')}=(.+)$`, 'm'));
+      if (m) return m[1].trim();
+    }
+  } catch (_) { /* nada */ }
+  return null;
 }
 
 let vigilante = null;
@@ -957,8 +1109,15 @@ ipcMain.handle('estanteria:imagen', (_e, relativa) => {
   return aDataURL(destino);
 });
 
-ipcMain.handle('estanteria:abrir-ruta', (_e, ruta) => {
-  if (ruta && fs.existsSync(ruta)) shell.openPath(ruta);
+ipcMain.handle('estanteria:abrir-ruta', async (_e, ruta) => {
+  if (!ruta || !fs.existsSync(ruta)) return;
+  // Un lanzador de Linux se ejecuta, no se abre en el editor de texto.
+  if (ES_LINUX && ruta.toLowerCase().endsWith('.desktop')) {
+    if (await ejecutar('gio', ['launch', ruta])) return;
+    if (await lanzarPrimero([['gtk-launch', path.basename(ruta, '.desktop')]])) return;
+  }
+  const err = await shell.openPath(ruta);
+  if (err) console.warn('[estanteria] No se pudo abrir:', ruta, err);
 });
 
 ipcMain.handle('estanteria:crear-carpeta', (_e, nombre) => {
@@ -999,10 +1158,11 @@ ipcMain.handle('estanteria:renombrar-carpeta', (_e, ruta, nombre) => {
 ipcMain.handle('estanteria:crear-acceso', async () => {
   const filtros = process.platform === 'win32'
     ? [{ name: 'Programas', extensions: ['exe', 'bat', 'cmd', 'msi', 'lnk'] }, { name: 'Todo', extensions: ['*'] }]
-    : [{ name: 'Todo', extensions: ['*'] }];
+    : [{ name: 'Todo', extensions: ['*'] }, { name: 'Lanzadores', extensions: ['desktop'] }];
 
   const r = await dialog.showOpenDialog(win, {
     title: 'Elige el programa al que apuntará el acceso directo',
+    defaultPath: ES_LINUX && fs.existsSync('/usr/share/applications') ? '/usr/share/applications' : undefined,
     buttonLabel: 'Crear acceso',
     properties: ['openFile'],
     filters: filtros,
@@ -1021,6 +1181,16 @@ ipcMain.handle('estanteria:crear-acceso', async () => {
         description: etiqueta,
       });
       return ok ? { ruta, nombre: path.basename(ruta, '.lnk') } : null;
+    }
+    // Elegir un lanzador .desktop (p. ej. de /usr/share/applications) lo
+    // copia al escritorio, que es como funcionan los accesos en Linux.
+    if (ES_LINUX && destinoReal.toLowerCase().endsWith('.desktop')) {
+      const ruta = path.join(dirEscritorio(), nombreLibreCarpeta(etiqueta, '.desktop'));
+      fs.copyFileSync(destinoReal, ruta);
+      fs.chmodSync(ruta, 0o755);
+      // GNOME solo los lanza si están marcados como de confianza.
+      ejecutar('gio', ['set', ruta, 'metadata::trusted', 'true']);
+      return { ruta, nombre: nombreDesktop(ruta) || etiqueta };
     }
     // Fuera de Windows, un enlace simbólico hace el mismo papel.
     const ruta = path.join(dirEscritorio(), nombreLibreCarpeta(etiqueta));
@@ -1055,9 +1225,13 @@ function powershell(orden) {
   });
 }
 
+/** La papelera de Linux sigue el estándar XDG: respeta XDG_DATA_HOME. */
+const dirPapeleraXDG = () => path.join(
+  process.env.XDG_DATA_HOME || path.join(app.getPath('home'), '.local', 'share'), 'Trash');
+
 const dirPapelera = () => (process.platform === 'darwin'
   ? path.join(app.getPath('home'), '.Trash')
-  : path.join(app.getPath('home'), '.local', 'share', 'Trash', 'files'));
+  : path.join(dirPapeleraXDG(), 'files'));
 
 /** ¿Tiene algo dentro? Sirve para dibujarla llena o vacía. */
 async function papeleraLlena() {
@@ -1081,17 +1255,26 @@ ipcMain.handle('estanteria:papelera-estado', () => papeleraLlena());
 
 ipcMain.handle('estanteria:papelera-abrir', () => {
   if (process.platform === 'win32') spawn('explorer.exe', ['shell:RecycleBinFolder'], { detached: true });
-  else shell.openPath(dirPapelera());
+  else if (ES_LINUX) {
+    // Con el gestor de archivos se ve como papelera (con "Restaurar"), no
+    // como una carpeta suelta.
+    lanzarPrimero([['gio', 'open', 'trash:///']]).then((ok) => { if (!ok) shell.openPath(dirPapelera()); });
+  } else shell.openPath(dirPapelera());
   return true;
 });
 
 ipcMain.handle('estanteria:papelera-vaciar', async () => {
   if (process.platform === 'win32') {
     await powershell('Clear-RecycleBin -Force -ErrorAction SilentlyContinue');
+  } else if (ES_LINUX && await ejecutar('gio', ['trash', '--empty'])) {
+    // gio vacía también las papeleras de otros discos
   } else {
     try {
-      for (const f of fs.readdirSync(dirPapelera())) {
-        fs.rmSync(path.join(dirPapelera(), f), { recursive: true, force: true });
+      // En Linux, junto a cada archivo hay una ficha en info/: se borran ambas.
+      const dirs = ES_LINUX ? [dirPapelera(), path.join(dirPapeleraXDG(), 'info')] : [dirPapelera()];
+      for (const d of dirs) {
+        if (!fs.existsSync(d)) continue;
+        for (const f of fs.readdirSync(d)) fs.rmSync(path.join(d, f), { recursive: true, force: true });
       }
     } catch (err) {
       contarError('No se pudo vaciar la papelera', err);
@@ -1181,15 +1364,30 @@ ipcMain.handle('estanteria:pegar', () => {
 ipcMain.handle('estanteria:sistema', (_e, que) => {
   const dir = dirEscritorio();
   if (que === 'pantalla' || que === 'personalizar') {
-    if (process.platform !== 'win32') return false;
-    return shell.openExternal(que === 'pantalla' ? 'ms-settings:display' : 'ms-settings:personalization')
-      .then(() => true, () => false);
+    if (process.platform === 'win32') {
+      return shell.openExternal(que === 'pantalla' ? 'ms-settings:display' : 'ms-settings:personalization')
+        .then(() => true, () => false);
+    }
+    if (ES_LINUX) {
+      // Cada escritorio tiene su panel de ajustes: se prueba el que haya.
+      return que === 'pantalla'
+        ? lanzarPrimero([['gnome-control-center', 'display'], ['kcmshell6', 'kcm_kscreen'],
+          ['kcmshell5', 'kcm_kscreen'], ['xfce4-display-settings'], ['cinnamon-settings', 'display'],
+          ['mate-display-properties'], ['arandr']])
+        : lanzarPrimero([['gnome-control-center', 'background'], ['systemsettings', 'kcm_wallpaper'],
+          ['systemsettings5'], ['xfce4-settings-manager'], ['cinnamon-settings', 'backgrounds'],
+          ['mate-appearance-properties']]);
+    }
+    return false;
   }
   if (que === 'terminal') {
-    if (process.platform === 'win32') spawn('cmd.exe', ['/c', 'start', '', 'wt.exe', '-d', dir], { detached: true, shell: false })
-      .on('error', () => spawn('cmd.exe', ['/c', 'start', '', 'cmd.exe'], { cwd: dir, detached: true }));
-    else spawn('x-terminal-emulator', [], { cwd: dir, detached: true }).on('error', () => {});
-    return true;
+    if (process.platform === 'win32') {
+      spawn('cmd.exe', ['/c', 'start', '', 'wt.exe', '-d', dir], { detached: true, shell: false })
+        .on('error', () => spawn('cmd.exe', ['/c', 'start', '', 'cmd.exe'], { cwd: dir, detached: true }));
+      return true;
+    }
+    return lanzarPrimero([['x-terminal-emulator'], ['gnome-terminal'], ['konsole'], ['xfce4-terminal'],
+      ['mate-terminal'], ['tilix'], ['kitty'], ['alacritty'], ['xterm']], dir);
   }
   return false;
 });
@@ -1252,7 +1450,9 @@ ipcMain.on('estanteria:escenas', (_e, datos) => {
 
 function iconoBandeja() {
   const f = path.join(DIR_ASSETS, 'icono.png');
-  if (fs.existsSync(f)) return nativeImage.createFromPath(f).resize({ width: 18, height: 18 });
+  // En Linux el panel escala el icono él solo y se ve mejor a 22 o 24 px.
+  const lado = ES_LINUX ? 24 : 18;
+  if (fs.existsSync(f)) return nativeImage.createFromPath(f).resize({ width: lado, height: lado });
   return nativeImage.createEmpty();
 }
 
@@ -1264,7 +1464,9 @@ function actualizarMenuBandeja() {
     sublabel: detalle,
     type: 'radio',
     checked: ajustes.anclaje === id,
-    enabled: process.platform === 'win32' || id === 'ventana' || id === 'encima',
+    // En Linux 'suelta' es lo mismo que 'encima'; en macOS no hay 'detras'.
+    enabled: process.platform === 'win32' || id === 'ventana' || id === 'encima'
+      || (ES_LINUX && id === 'detras'),
     click: () => cambiarAnclaje(id),
   });
 
@@ -1322,6 +1524,8 @@ function actualizarMenuBandeja() {
     {
       label: 'Abrir al iniciar sesión',
       sublabel: process.platform === 'win32' ? 'Sin retardo, de los primeros' : undefined,
+      // En desarrollo apuntaría al Electron de node_modules; en Linux sí se
+      // puede siempre que sea el AppImage o un paquete instalado.
       type: 'checkbox',
       checked: ajustes.arranque,
       enabled: app.isPackaged,
@@ -1363,6 +1567,11 @@ function mostrarEstado() {
     esc ? `WorkerW encontradas: ${esc.workerw} (con iconos dentro: ${esc.conIconos})` : null,
     esc ? `Iconos colgando de Progman: ${si(esc.iconosEnProgman)}  → ${esc.iconosEnProgman ? 'Windows 11' : 'Windows 10'}` : null,
     esc ? `Capa del fondo localizada: ${si(esc.elegida)}` : null,
+    esc && esc.monitor ? `Monitor principal (px reales): ${esc.monitor.right - esc.monitor.left}×${esc.monitor.bottom - esc.monitor.top}` : null,
+    esc && esc.caja ? `Tamaño de la estantería: ${esc.caja.w}×${esc.caja.h} en (${esc.caja.x}, ${esc.caja.y})` : null,
+    `Pantalla según Electron: ${screen.getPrimaryDisplay().size.width}×${screen.getPrimaryDisplay().size.height} `
+      + `a escala ${Math.round(screen.getPrimaryDisplay().scaleFactor * 100)} %`,
+    ES_LINUX ? `Sesión: ${process.env.XDG_SESSION_TYPE || '¿?'} · Escritorio: ${process.env.XDG_CURRENT_DESKTOP || '¿?'}` : null,
     raton ? `Lectura de botones: ${si(raton.botones)}` : null,
     raton ? `Ventana bajo el cursor: ${si(raton.bajoCursor)}` : null,
     raton ? `Ventana en primer plano: ${si(raton.primerPlano)}` : null,
@@ -1413,6 +1622,9 @@ if (!app.requestSingleInstanceLock()) {
     // en desarrollo apuntaría al electron.exe de node_modules.
     if (app.isPackaged) arranqueAutomatico(ajustes.arranque);
 
+    // Hay distribuciones sin carpeta Escritorio hasta que se crea algo en ella.
+    try { fs.mkdirSync(dirEscritorio(), { recursive: true }); } catch (_) { /* nada */ }
+
     crearVentana();
     crearBandeja();
     vigilarEscritorio();
@@ -1423,11 +1635,16 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     // El explorador de Windows recrea el escritorio al cambiar de resolución.
+    // Cambiar de resolución o de escala: se vuelve a medir y a colocar. Se
+    // espera un poco porque el Explorador recrea el escritorio a la vez.
+    let cambioPantalla = null;
     screen.on('display-metrics-changed', () => {
-      if (!win || win.isDestroyed()) return;
-      const { bounds } = screen.getPrimaryDisplay();
-      win.setBounds(bounds);
-      if (modo === 'fondo') aplicarModo('fondo');
+      clearTimeout(cambioPantalla);
+      cambioPantalla = setTimeout(() => {
+        if (!win || win.isDestroyed()) return;
+        if (!anclada) win.setBounds(pantallaPrincipal());
+        aplicarModo(modo);
+      }, 400);
     });
     screen.on('display-added', () => { if (win && !win.isDestroyed()) aplicarModo(modo); });
     screen.on('display-removed', () => { if (win && !win.isDestroyed()) aplicarModo(modo); });

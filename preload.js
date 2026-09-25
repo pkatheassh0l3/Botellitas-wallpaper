@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('estanteria', {
 
   alCambiarModo: (cb) => ipcRenderer.on('estanteria:modo', (_e, modo) => cb(modo)),
   alRecargar: (cb) => ipcRenderer.on('estanteria:recargar', () => cb()),
+  alMedir: (cb) => ipcRenderer.on('estanteria:medir', () => cb()),
   alNueva: (cb) => ipcRenderer.on('estanteria:nueva', () => cb()),
   alMoverCursor: (cb) => ipcRenderer.on('estanteria:cursor', (_e, p) => cb(p)),
   alCambiarEscena: (cb) => ipcRenderer.on('estanteria:escena', (_e, id) => cb(id)),

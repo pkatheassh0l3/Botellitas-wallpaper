@@ -11,8 +11,17 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  publicar:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - so: windows-latest
+            orden: --win
+          - so: ubuntu-latest
+            orden: --linux
+
+    runs-on: ${{ matrix.so }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +34,6 @@ jobs:
         run: npm ci
 
       - name: Construir y subir a GitHub Releases
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder ${{ matrix.orden }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

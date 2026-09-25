@@ -5,10 +5,17 @@ Versiones: [SemVer](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
+### Añadido
+- **Linux**: AppImage y paquete `.deb`. Fondo de escritorio de verdad (ventana de tipo escritorio en X11 y XWayland), arranque al iniciar sesión (`~/.config/autostart`), papelera del sistema, lanzadores `.desktop` y enlaces simbólicos como botellas, y los ajustes de pantalla, fondo y terminal de GNOME, KDE, XFCE, Cinnamon y MATE.
+- Las actions construyen también la versión de Linux.
+
 ### Cambiado
+- La estantería ocupa toda la pantalla sea cual sea la resolución o la proporción (16:9, 16:10, 4:3, 21:9, 32:9): la pared se recorta sin deformarse y las baldas se adaptan a lo ancho, sin cortar nunca el suelo.
 - Las botellas se pueden arrastrar de una balda a otra sin entrar en el modo edición. Un clic o doble clic sigue abriendo la carpeta; solo se mueven al arrastrar más de unos píxeles.
 
 ### Corregido
+- Con resoluciones por encima de 1080p (y escalado de pantalla) el fondo salía a medio tamaño en una esquina en Windows. Ahora el tamaño se pide a Windows en píxeles reales.
+- Con escalado de pantalla, los clics prestados en la capa «Detrás de los iconos» miraban otro punto de la pantalla.
 - Al encender el ordenador ya no se abre el modo edición: se ignoran las copias que lanza Windows al iniciar sesión, «Como ventana» ya no se queda guardada, y mientras espera al Explorador no se pone delante de las demás ventanas.
 - La capa «Suelta, sin anclar» se perdía al reiniciar y volvía a «Sobre los iconos».
 - El arranque automático de la versión portable apuntaba a una carpeta temporal.

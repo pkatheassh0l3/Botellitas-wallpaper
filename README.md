@@ -6,8 +6,33 @@ botella puede abrir una carpeta de tu ordenador.
 
 ## Requisitos
 
-Node.js 18 o superior. Windows 10 u 11 para el anclaje al escritorio; en macOS y
-Linux funciona con limitaciones (ver *Cómo se pega al escritorio*).
+Node.js 18 o superior. Windows 10 u 11, o Linux (GNOME, KDE, XFCE, Cinnamon,
+MATE…). En macOS funciona con limitaciones (ver *Cómo se pega al escritorio*).
+
+Funciona con cualquier resolución y proporción de pantalla: 1080p, 1440p, 4K,
+con o sin escalado, 16:10, 4:3 y ultrapanorámicas.
+
+## Linux
+
+Descarga de **Releases** el `.AppImage` (vale para cualquier distribución: dale
+permiso de ejecución y ábrelo) o el `.deb` (Debian, Ubuntu, Mint, Pop!_OS…:
+`sudo apt install ./Estanteria-*.deb`). Para construirlos tú: `npm run build:linux`.
+
+- **Capas.** *Detrás de los iconos* la pone como fondo de escritorio de verdad y
+  es la recomendada. *Sobre los iconos* es una ventana normal siempre al fondo,
+  y para eso necesita `wmctrl` (`sudo apt install wmctrl`). Cambiar de capa pide
+  reiniciar la app; lo hace ella sola.
+- **Wayland.** Wayland no deja a ninguna app colocarse como fondo, así que la
+  estantería se abre por XWayland, que viene de serie en GNOME y KDE. Funciona
+  igual; no hay que hacer nada.
+- **Icono de la bandeja.** En GNOME hace falta la extensión *AppIndicator and
+  KStatusNotifierItem Support* (en Ubuntu ya viene). Sin ella, usa **Ctrl+Alt+E**.
+- **Accesos directos.** Los lanzadores `.desktop` y los enlaces simbólicos del
+  escritorio salen como botellas. *Nuevo → Acceso directo* abre
+  `/usr/share/applications` para elegir una aplicación.
+- **Arranque al iniciar sesión.** Deja un `estanteria.desktop` en
+  `~/.config/autostart`; se quita desmarcando la opción en la bandeja.
+
 
 ## Empezar
 

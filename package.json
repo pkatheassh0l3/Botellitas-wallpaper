@@ -5,6 +5,7 @@
   "description": "Un escritorio con forma de estanteria: tus carpetas son botellas.",
   "main": "main.js",
   "author": "Esther",
+  "homepage": "https://github.com/pkatheassh0l3/Botellitas-wallpaper",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -13,10 +14,12 @@
     "build": "electron-builder",
     "carpeta": "electron-builder --dir",
     "portable": "electron-builder --win portable",
-    "release": "electron-builder --win --publish always",
+    "release": "electron-builder --publish always",
     "version:patch": "npm version patch && git push --follow-tags",
     "version:minor": "npm version minor && git push --follow-tags",
-    "version:major": "npm version major && git push --follow-tags"
+    "version:major": "npm version major && git push --follow-tags",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
   },
   "devDependencies": {
     "electron": "^31.0.0",
@@ -38,7 +41,8 @@
       "preload.js",
       "win-wallpaper.js",
       "renderer/**",
-      "assets/**"
+      "assets/**",
+      "build/icon.png"
     ],
     "asarUnpack": [
       "assets/**"
@@ -78,9 +82,29 @@
       "category": "public.app-category.utilities"
     },
     "linux": {
-      "target": "AppImage",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.png",
-      "category": "Utility"
+      "category": "Utility",
+      "executableName": "estanteria",
+      "artifactName": "Estanteria-${version}-${arch}.${ext}",
+      "synopsis": "Un escritorio con forma de estantería",
+      "maintainer": "Esther <103638777+pkatheassh0l3@users.noreply.github.com>",
+      "desktop": {
+        "Name": "Estantería"
+      }
     },
     "portable": {
       "artifactName": "Estanteria-portable-${version}.exe"
@@ -90,6 +114,23 @@
         "provider": "github",
         "releaseType": "release"
       }
-    ]
+    ],
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0"
+      ],
+      "recommends": [
+        "wmctrl",
+        "libappindicator3-1"
+      ]
+    }
   }
 }

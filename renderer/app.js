@@ -227,14 +227,33 @@ window.addEventListener('beforeunload', guardarYa);
 
 // --- Geometría ----------------------------------------------------------
 
+/* Cuánto se deja estirar o encoger a lo ancho la capa de las baldas para
+   cubrir una pantalla que no es 16:9. La pared no se deforma nunca (va con
+   object-fit: cover) y las botellas y pósters tampoco, porque su ancho sale de
+   su propia proporción. Pasado este margen, se recorta. */
+const ESTIRAR_MIN = 0.75;   // 4:3
+const ESTIRAR_MAX = 2;      // 32:9, las súper ultrapanorámicas
+
 function calcularRect() {
   const cw = window.innerWidth;
   const ch = window.innerHeight;
   const iw = elPared.naturalWidth || cw;
   const ih = elPared.naturalHeight || ch;
-  const escala = st.ajuste === 'contain' ? Math.min(cw / iw, ch / ih) : Math.max(cw / iw, ch / ih);
 
-  rect = { x: (cw - iw * escala) / 2, y: (ch - ih * escala) / 2, w: iw * escala, h: ih * escala };
+  if (st.ajuste === 'contain') {
+    const escala = Math.min(cw / iw, ch / ih);
+    rect = { x: (cw - iw * escala) / 2, y: (ch - ih * escala) / 2, w: iw * escala, h: ih * escala };
+  } else {
+    // La escena ocupa toda la pantalla: 1920×1080, 2560×1440, 4K, 16:10,
+    // ultrapanorámica… Las baldas se adaptan a lo ancho dentro del margen.
+    const k = Math.min(ESTIRAR_MAX, Math.max(ESTIRAR_MIN, (cw / ch) / (iw / ih)));
+    const proporcion = (iw / ih) * k;
+    let w = cw;
+    let h = cw / proporcion;
+    if (h < ch) { h = ch; w = ch * proporcion; }
+    // Si sobra alto se recorta por arriba, nunca el suelo; si sobra ancho, a partes iguales.
+    rect = { x: (cw - w) / 2, y: ch - h, w, h };
+  }
   Object.assign(elEscenario.style, {
     left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px`,
   });
@@ -1845,7 +1864,23 @@ async function iniciar() {
 
 elAviso.addEventListener('click', () => { elAviso.hidden = true; });
 
-window.addEventListener('resize', () => { if (st) { calcularRect(); pintar(); } });
+/* Volver a medir cuando cambia el tamaño. Al anclar la ventana al escritorio
+   el cambio de tamaño lo hace Windows por debajo y a veces Chromium no manda
+   'resize', así que además se observa el propio documento y el proceso
+   principal avisa cuando termina de colocarla. */
+let medidaPendiente = 0;
+function remedir() {
+  if (!st || medidaPendiente) return;
+  medidaPendiente = requestAnimationFrame(() => {
+    medidaPendiente = 0;
+    const antes = `${rect.x},${rect.y},${rect.w},${rect.h}`;
+    calcularRect();
+    if (`${rect.x},${rect.y},${rect.w},${rect.h}` !== antes) pintar();
+  });
+}
+window.addEventListener('resize', remedir);
+new ResizeObserver(remedir).observe(document.documentElement);
+window.estanteria.alMedir(remedir);
 window.estanteria.alCambiarModo(aplicarModo);
 window.estanteria.alRecargar(() => location.reload());
 window.estanteria.alNueva(() => nuevaCarpeta());

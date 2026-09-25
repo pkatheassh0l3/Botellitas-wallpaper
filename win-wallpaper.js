@@ -61,14 +61,34 @@ GetForegroundWindow = declarar('GetForegroundWindow', HWND, []);
 const GetAncestor = declarar('GetAncestor', HWND, [HWND, 'uint']);
 const GA_PARENT = 1;
 
+// Estructuras de Windows. 'int32_t' y no 'long' para no depender del sistema.
+let POINT = null;
+let RECT = null;
+let MONITORINFO = null;
+try {
+  POINT = koffi.struct('POINT', { x: 'int32_t', y: 'int32_t' });
+  RECT = koffi.struct('RECT', { left: 'int32_t', top: 'int32_t', right: 'int32_t', bottom: 'int32_t' });
+  MONITORINFO = koffi.struct('MONITORINFO', {
+    cbSize: 'uint32_t', rcMonitor: RECT, rcWork: RECT, dwFlags: 'uint32_t',
+  });
+} catch (err) {
+  fallos.push(`estructuras: ${err.message}`);
+}
+
 // WindowFromPoint recibe un POINT por valor; si el struct no se puede definir,
 // nos apañamos con la ventana en primer plano.
-try {
-  const POINT = koffi.struct('POINT', { x: 'long', y: 'long' });
-  WindowFromPoint = user32.func('__stdcall', 'WindowFromPoint', HWND, [POINT]);
-} catch (err) {
-  fallos.push(`WindowFromPoint: ${err.message}`);
-}
+if (POINT) WindowFromPoint = declarar('WindowFromPoint', HWND, [POINT]);
+
+/* Medidas del monitor en píxeles FÍSICOS, preguntadas a Windows. Electron da
+   las medidas en píxeles lógicos y hay que multiplicar por la escala; con
+   escalado (125 %, 150 %…, lo normal por encima de 1080p) esa cuenta fallaba y
+   el fondo salía en una esquina. Aquí no hay ninguna cuenta que hacer. */
+const MonitorFromPoint = POINT ? declarar('MonitorFromPoint', 'uintptr_t', [POINT, 'uint32_t']) : null;
+const GetMonitorInfoW = MONITORINFO
+  ? declarar('GetMonitorInfoW', 'bool', ['uintptr_t', koffi.inout(koffi.pointer(MONITORINFO))]) : null;
+const MapWindowPoints = RECT
+  ? declarar('MapWindowPoints', 'int', [HWND, HWND, koffi.inout(koffi.pointer(RECT)), 'uint32_t']) : null;
+const MONITOR_DEFAULTTOPRIMARY = 1;
 
 if (fallos.length) console.warn('[estanteria] Raton prestado, funciones no disponibles:', fallos.join(' | '));
 
@@ -180,12 +200,54 @@ function noActivar(win, si) {
   SetExStyle(hwnd, GWL_EXSTYLE, estilo);
 }
 
+/** Rectángulo del monitor principal en píxeles físicos de pantalla. */
+function monitorPrincipal() {
+  if (!MonitorFromPoint || !GetMonitorInfoW) return null;
+  try {
+    // El principal es, por definición, el que contiene el punto (0, 0).
+    const hmon = MonitorFromPoint({ x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+    if (!hmon) return null;
+    const info = {
+      cbSize: koffi.sizeof(MONITORINFO),
+      rcMonitor: { left: 0, top: 0, right: 0, bottom: 0 },
+      rcWork: { left: 0, top: 0, right: 0, bottom: 0 },
+      dwFlags: 0,
+    };
+    if (!GetMonitorInfoW(hmon, info)) return null;
+    return { ...info.rcMonitor };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Dónde cae el monitor principal dentro de la ventana padre (la WorkerW o
+ * Progman), que cubre todas las pantallas y tiene su propio origen.
+ */
+function cajaEnPadre(padre) {
+  const r = monitorPrincipal();
+  if (!r || !MapWindowPoints) return null;
+  try {
+    const rel = { ...r };
+    MapWindowPoints(0, padre, rel, 2);   // un RECT son dos POINT seguidos
+    const w = rel.right - rel.left;
+    const h = rel.bottom - rel.top;
+    return w > 0 && h > 0 ? { x: rel.left, y: rel.top, w, h } : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Último anclaje, para poder recolocar la ventana sin volver a buscar nada.
+let ultimo = null;
+
 /**
  * @param {BrowserWindow} win
  * @param {'encima'|'detras'} capa
- * @param {{x:number,y:number,w:number,h:number}} caja  en píxeles físicos
+ * @param {{x:number,y:number,w:number,h:number}} respaldo  en píxeles físicos,
+ *        calculado por Electron; solo se usa si Windows no contesta
  */
-function anclar(win, capa, caja) {
+function anclar(win, capa, respaldo) {
   const hwnd = hwndDe(win);
   const progman = FindWindowW('Progman', null);
   if (!progman) throw new Error('No se encontró la ventana Progman del escritorio');
@@ -199,7 +261,9 @@ function anclar(win, capa, caja) {
   noActivar(win, true);
   EnableWindow(hwnd, true);   // sin esto no llegaría ni un clic
 
-  // Ya somos ventana hija: las coordenadas pasan a ser relativas al escritorio.
+  // Ya somos ventana hija: las coordenadas pasan a ser relativas al padre.
+  const caja = cajaEnPadre(destino) || respaldo;
+  ultimo = { destino, capa, caja };
   SetWindowPos(
     hwnd,
     capa === 'detras' ? HWND_BOTTOM : HWND_TOP,
@@ -207,11 +271,30 @@ function anclar(win, capa, caja) {
     SWP_NOACTIVATE | SWP_SHOWWINDOW,
   );
   ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+  return caja;
+}
+
+/**
+ * Vuelve a darle el tamaño del monitor. Con `encoger` la deja un píxel más
+ * baja: se usa para obligar a Chromium a redibujar (y a enterarse del tamaño
+ * nuevo), y enseguida se llama otra vez sin él.
+ */
+function ajustar(win, encoger = false) {
+  if (!ultimo) return false;
+  const caja = cajaEnPadre(ultimo.destino) || ultimo.caja;
+  ultimo.caja = caja;
+  SetWindowPos(
+    hwndDe(win),
+    ultimo.capa === 'detras' ? HWND_BOTTOM : HWND_TOP,
+    caja.x, caja.y, caja.w, caja.h - (encoger ? 1 : 0),
+    SWP_NOACTIVATE,
+  );
   return true;
 }
 
 /** Devuelve la ventana al escritorio normal para poder editarla. */
 function soltar(win) {
+  ultimo = null;
   const hwnd = hwndDe(win);
   SetParent(hwnd, 0);
   noActivar(win, false);
@@ -323,6 +406,8 @@ function diagnosticoEscritorio() {
     conIconos: ws.filter((w) => FindWindowExW(w, 0, 'SHELLDLL_DefView', null)).length,
     iconosEnProgman: Boolean(progman && FindWindowExW(progman, 0, 'SHELLDLL_DefView', null)),
     elegida: progman ? Boolean(buscarWorkerW(progman)) : false,
+    monitor: monitorPrincipal(),
+    caja: ultimo ? ultimo.caja : null,
   };
 }
 
@@ -337,11 +422,12 @@ function estadoRaton() {
 }
 
 // Sirve para detectar un archivo desactualizado tras una actualización a medias.
-const VERSION = 5;
+const VERSION = 6;
 
 module.exports = {
   VERSION,
   anclar,
+  ajustar,
   soltar,
   reponer,
   noActivar,

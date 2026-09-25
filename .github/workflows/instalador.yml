@@ -1,8 +1,8 @@
 name: Crear instalador
 
-# Construye el instalador de Windows y lo deja para descargar en la pestaña
-# Actions, sin publicar ninguna versión. Se lanza a mano (Actions → Crear
-# instalador → Run workflow) y en cada cambio que llega a main.
+# Construye los instaladores de Windows y Linux y los deja para descargar en la
+# pestaña Actions, sin publicar ninguna versión. Se lanza a mano (Actions →
+# Crear instalador → Run workflow) y en cada cambio que llega a main.
 on:
   workflow_dispatch:
   push:
@@ -18,8 +18,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  construir:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - so: windows-latest
+            nombre: windows
+            orden: --win
+            archivos: dist/*.exe
+          - so: ubuntu-latest
+            nombre: linux
+            orden: --linux
+            archivos: |
+              dist/*.AppImage
+              dist/*.deb
+
+    runs-on: ${{ matrix.so }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,14 +46,13 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
-      - name: Construir instalador y portable
-        run: npx electron-builder --win --publish never
+      - name: Construir
+        run: npx electron-builder ${{ matrix.orden }} --publish never
 
       - name: Subir el instalador
         uses: actions/upload-artifact@v4
         with:
-          name: Estanteria-instalador-${{ github.sha }}
-          path: |
-            dist/*.exe
+          name: Estanteria-${{ matrix.nombre }}-${{ github.sha }}
+          path: ${{ matrix.archivos }}
           if-no-files-found: error
           retention-days: 30

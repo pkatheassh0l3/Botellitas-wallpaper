@@ -79,7 +79,7 @@ html, body {
 
 /* La pared solo lleva filtro con un color a medida; la madera y las botellas,
    la misma atenuación suave, para que todo tire del mismo tono. */
-#pared { filter: var(--tinte-pared, none); z-index: 0; }
+#pared { filter: var(--tinte-pared, none); z-index: 0; object-fit: cover; }
 
 /* Capa del color a medida: toma el tono y la saturación de aquí y la
    luminosidad de la pared, que es donde vive la textura del ladrillo. */
