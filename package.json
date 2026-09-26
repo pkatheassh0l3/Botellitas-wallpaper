@@ -40,6 +40,8 @@
       "main.js",
       "preload.js",
       "win-wallpaper.js",
+      "linux-lanzar.js",
+      "linux-escritorio.js",
       "renderer/**",
       "assets/**",
       "build/icon.png"

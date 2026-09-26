@@ -58,6 +58,13 @@ let imagenes = {};
 let carpetas = [];        // carpetas del escritorio, tal cual están en disco
 let escritorio = '';
 let papeleraLlena = false;
+let plataforma = '';
+let catalogoApps = new Map();   // id del .desktop -> {nombre, fichero, …}   (Linux)
+
+// Las apps del sistema puestas en la estantería llevan este prefijo en su id.
+const PREFIJO_APP = 'app:';
+const esApp = (id) => typeof id === 'string' && id.startsWith(PREFIJO_APP);
+const idDesktop = (id) => id.slice(PREFIJO_APP.length);
 let st = null;
 let modo = 'fondo';
 let anclaje = 'encima';
@@ -112,6 +119,19 @@ function objetos() {
     ruta: c.ruta,
     grafico: graficoDe(c),
   }));
+  // Aplicaciones del sistema fijadas en la estantería. Si se desinstaló una,
+  // no se dibuja, pero se recuerda por si vuelve.
+  for (const [desk, datos] of Object.entries(st.apps || {})) {
+    const info = catalogoApps.get(desk);
+    if (!info) continue;
+    const id = PREFIJO_APP + desk;
+    const nombre = datos.nombre || info.nombre;
+    lista.push({
+      id, tipo: 'botella', clase: 'app', nombre, ruta: info.fichero,
+      grafico: graficoDe({ ruta: id, nombre: info.nombre }),
+    });
+  }
+
   lista.push({
     id: PAPELERA,
     tipo: 'botella',
@@ -137,7 +157,8 @@ function graficoDe(c) {
   return { tipo: g?.tipo || 'botella', base: Botellas.sugerirBase(c.nombre), capas: [], texto: g?.texto };
 }
 
-const esCarpeta = (id) => id === PAPELERA || carpetas.some((c) => c.ruta === id);
+const esCarpeta = (id) => id === PAPELERA || carpetas.some((c) => c.ruta === id)
+  || (esApp(id) && Boolean(st.apps?.[idDesktop(id)]) && catalogoApps.has(idDesktop(id)));
 
 const objeto = (id) => objetos().find((o) => o.id === id);
 const esPoster = (id) => Boolean(st.posters[id]);
@@ -626,6 +647,14 @@ function mudar(viejo, nuevo) {
 
 async function renombrar(id, nombre) {
   if (id === PAPELERA) return null;
+  if (esApp(id)) {
+    const datos = st.apps[idDesktop(id)];
+    if (!datos) return null;
+    const original = catalogoApps.get(idDesktop(id))?.nombre;
+    datos.nombre = nombre && nombre !== original ? nombre : undefined;
+    guardar(); refrescarNodo(id); pintar();
+    return id;
+  }
   const r = await window.estanteria.renombrarCarpeta(id, nombre);
   if (!r) {
     await dialogo({ titulo: 'No se pudo renombrar', detalle: 'Puede que el nombre ya esté en uso o que la carpeta esté abierta.', aceptarTxt: 'Vale' });
@@ -641,7 +670,7 @@ async function renombrarInteractivo(id) {
   const o = objeto(id);
   if (!o) return;
   if (esPoster(id)) { editar(id); return; }
-  const nombre = await pedirTexto('Nuevo nombre de la carpeta', o.nombre);
+  const nombre = await pedirTexto(esApp(id) ? 'Nombre en la estantería' : 'Nuevo nombre', o.nombre);
   if (nombre) await renombrar(id, nombre);
 }
 
@@ -706,8 +735,18 @@ function editar(id) {
   });
 }
 
+/** Quita una app de la estantería. La aplicación sigue instalada. */
+function quitarApp(id) {
+  delete st.apps[idDesktop(id)];
+  for (const e of Object.values(st.escenas)) delete e.botellas[id];
+  delete st.graficos[id];
+  if (seleccion === id) seleccion = null;
+  guardar(); pintar();
+}
+
 const eliminar = (id) => {
   if (id === PAPELERA) return;
+  if (esApp(id)) return quitarApp(id);
   return esPoster(id) ? borrarPoster(id) : tirarCarpeta(id);
 };
 
@@ -721,10 +760,12 @@ function borrarPoster(id) {
 /** Manda la carpeta a la papelera del sistema; nunca borra sin más. */
 async function tirarCarpeta(id) {
   if (id === PAPELERA) return;
+  if (esApp(id)) { quitarApp(id); return; }   // tirar una app = quitarla de la balda
   const o = objeto(id);
   if (!o || !o.ruta) return;
+  const que = { carpeta: 'la carpeta, con lo que tenga dentro', archivo: 'el archivo', acceso: 'el acceso directo' }[o.clase] || 'el elemento';
   const ok = await confirmar(`¿Enviar "${o.nombre}" a la papelera?`,
-    'Se mueve la carpeta de verdad, con lo que tenga dentro. Podrás recuperarla desde la papelera.');
+    `Se mueve ${que} de verdad. Podrás recuperarlo desde la papelera.`);
   if (!ok) return;
 
   if (await window.estanteria.tirarCarpeta(id)) {
@@ -741,7 +782,16 @@ function alAbrir(id) {
   const o = objeto(id);
   if (!o) return;
   if (modo === 'editar') { editar(id); return; }
-  if (o.ruta) window.estanteria.abrirRuta(o.ruta);
+  if (!o.ruta) return;
+  // Respuesta al momento: la botella da un saltito mientras la app arranca.
+  const el = nodos.get(id);
+  if (el) {
+    el.classList.remove('abriendo');
+    void el.offsetWidth;   // reinicia la animación si pulsas dos veces seguidas
+    el.classList.add('abriendo');
+    setTimeout(() => el.classList.remove('abriendo'), 900);
+  }
+  window.estanteria.abrirRuta(o.ruta);
 }
 
 async function refrescarPapelera() {
@@ -1278,6 +1328,7 @@ async function menuDeFondo() {
       { txt: 'Carpeta', f: async () => { await asegurarEdicion(); nuevaCarpeta(); } },
       { txt: 'Acceso directo…', f: async () => { await asegurarEdicion(); nuevoAcceso(); } },
       { txt: 'Documento de texto', f: async () => { await asegurarEdicion(); nuevoDocumento(); } },
+      ...(plataforma === 'linux' ? [{ txt: 'Aplicación…', f: () => abrirSelectorApps() }] : []),
       '-',
       { txt: 'Póster…', f: async () => { await asegurarEdicion(); nuevoPoster(); } },
     ] },
@@ -1314,8 +1365,30 @@ function menuDePapelera() {
   ];
 }
 
+function menuDeApp(id, o) {
+  return [
+    { txt: 'Abrir', f: () => alAbrir(id) },
+    '-',
+    { txt: 'Cambiar nombre…', f: async () => { await asegurarEdicion(); renombrarInteractivo(id); } },
+    { txt: 'Cambiar gráfico…', f: async () => { await asegurarEdicion(); editar(id); } },
+    '-',
+    { txt: 'Capas', apagado: !sitio(id), sub: [
+      { txt: 'Traer al frente', f: () => traerAlFrente(id) },
+      { txt: 'Traer adelante', f: () => mover1Capa(id, 1) },
+      { txt: 'Enviar atrás', f: () => mover1Capa(id, -1) },
+      { txt: 'Enviar al fondo', f: () => enviarAlFondo(id) },
+    ] },
+    sitio(id)
+      ? { txt: 'Quitar de esta distribución', f: () => { colocar(id, null); guardar(); pintar(); } }
+      : { txt: 'Poner en la estantería', f: () => { ponerEnLaEstanteria(id); guardar(); pintar(); } },
+    '-',
+    { txt: 'Quitar de la estantería', f: () => quitarApp(id) },
+  ];
+}
+
 function menuDeBotella(id, o) {
   if (id === PAPELERA) return menuDePapelera();
+  if (esApp(id)) return menuDeApp(id, o);
   return [
     { txt: 'Abrir', f: () => window.estanteria.abrirRuta(o.ruta) },
     '-',
@@ -1614,7 +1687,7 @@ function objetoEn(p) {
 }
 
 window.addEventListener('contextmenu', (e) => {
-  if (Editor.abierto() || !$('#pregunta').hidden || ajustandoBaldas) return;
+  if (Editor.abierto() || !$('#pregunta').hidden || ajustandoBaldas || selectorAbierto()) return;
   e.preventDefault();
   const nodo = e.target.closest('.botella, .poster');
   if (nodo) seleccionar(nodo.dataset.id);
@@ -1704,6 +1777,162 @@ elEscenario.addEventListener('pointerdown', (e) => {
   if (e.target === elEscenario || e.target === elPared) seleccionar(null);
 });
 
+
+/* --- Aplicaciones del sistema (Linux) -----------------------------------
+
+   En Linux la estantería puede ser tu lanzador: cualquier aplicación del menú
+   del sistema (también Flatpak y Snap) se pone en una balda sin tener que
+   crear nada en el escritorio. Se abre con el lanzador rápido del proceso
+   principal. */
+
+let elSelector = null;
+let filtroApps = '';
+const selectorAbierto = () => Boolean(elSelector && !elSelector.hidden);
+const sinAcentos = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+function montarSelector() {
+  elSelector = document.createElement('div');
+  elSelector.id = 'selector-apps';
+  elSelector.hidden = true;
+  elSelector.innerHTML = `
+    <div class="caja" role="dialog" aria-modal="true" aria-label="Añadir aplicaciones">
+      <div class="cabecera">
+        <span class="titulo">Aplicaciones</span>
+        <input id="apps-buscar" type="search" placeholder="Buscar…" autocomplete="off">
+      </div>
+      <div class="lista" id="apps-lista"></div>
+      <div class="fila">
+        <small id="apps-cuenta"></small>
+        <span class="hueco"></span>
+        <button type="button" class="hecho" id="apps-cerrar">Listo</button>
+      </div>
+    </div>`;
+  document.body.appendChild(elSelector);
+
+  $('#apps-buscar').addEventListener('input', (e) => { filtroApps = e.target.value; pintarSelector(); });
+  $('#apps-cerrar').addEventListener('click', cerrarSelector);
+  elSelector.addEventListener('pointerdown', (e) => { if (e.target === elSelector) cerrarSelector(); });
+  elSelector.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); cerrarSelector(); }
+    // Intro añade la primera de la lista: buscar y pulsar Intro es lo más rápido.
+    if (e.key === 'Enter' && e.target.id === 'apps-buscar') {
+      elSelector.querySelector('.app-op:not([aria-pressed="true"])')?.click();
+    }
+  });
+  $('#apps-lista').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-app]');
+    if (!b) return;
+    if (st.apps[b.dataset.app]) quitarApp(PREFIJO_APP + b.dataset.app);
+    else añadirApp(b.dataset.app);
+    pintarSelector();
+  });
+}
+
+function pintarSelector() {
+  const q = sinAcentos(filtroApps.trim());
+  const lista = [...catalogoApps.values()].filter((a) => !q
+    || sinAcentos(`${a.nombre} ${a.descripcion} ${a.claves} ${a.id}`).includes(q));
+  $('#apps-lista').innerHTML = lista.map((a) => `
+    <button type="button" class="app-op" data-app="${escHtml(a.id)}" aria-pressed="${Boolean(st.apps[a.id])}"
+            title="${escHtml(a.descripcion || a.nombre)}">
+      <span class="nombre">${escHtml(a.nombre)}</span>
+      <small>${escHtml(a.descripcion || '')}</small>
+    </button>`).join('') || '<p class="vacio">Ninguna aplicación con ese nombre.</p>';
+  const n = Object.keys(st.apps).filter((d) => catalogoApps.has(d)).length;
+  $('#apps-cuenta').textContent = `${n} en la estantería · ${catalogoApps.size} instaladas`;
+}
+
+async function abrirSelectorApps() {
+  await asegurarEdicion();          // hace falta el teclado para buscar
+  if (!elSelector) montarSelector();
+  try {
+    // Se relee cada vez: así salen las que hayas instalado con la app abierta.
+    catalogoApps = new Map((await window.estanteria.apps(true)).map((a) => [a.id, a]));
+  } catch (_) { /* nos quedamos con el que había */ }
+  filtroApps = '';
+  $('#apps-buscar').value = '';
+  pintarSelector();
+  elSelector.hidden = false;
+  $('#apps-buscar').focus();
+}
+
+function cerrarSelector() {
+  if (elSelector) elSelector.hidden = true;
+}
+
+/** Pone una aplicación en el primer hueco libre de la estantería. */
+async function añadirApp(desk) {
+  if (!catalogoApps.has(desk)) return;
+  st.apps[desk] = st.apps[desk] || {};
+  const id = PREFIJO_APP + desk;
+  pintar();
+  await esperarDibujo(nodos.get(id));
+  if (!sitio(id)) ponerEnLaEstanteria(id);
+  seleccionar(id);
+  guardar(); pintar();
+}
+
+/* --- Soltar archivos desde el gestor de archivos ------------------------
+
+   Como en el escritorio de siempre: arrastras algo desde el gestor de
+   archivos y lo sueltas en una balda. Se mueve a la carpeta Escritorio (con
+   Ctrl pulsado, se copia) y su botella aparece justo donde lo soltaste. */
+
+const traeArchivos = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+
+function marcarDestinoArchivos(p) {
+  const destino = p ? baldaCercaDe(p.x, p.y) : null;
+  for (const l of elBaldas.children) l.classList.toggle('destino', l.dataset.id === destino);
+  document.body.dataset.soltando = p ? '1' : '0';
+}
+
+/** Coloca unas botellas recién llegadas en la balda más cercana al punto. */
+function colocarEnPunto(ids, p) {
+  const bal = balda(baldaCercaDe(p.x, p.y));
+  if (!bal) return;
+  const hueco = HUECO_PX / rect.w;
+  let x = (p.x - rect.x) / rect.w;
+  const z = Math.max(0, ...zTodas()) + 1;
+  for (const id of ids) {
+    const el = nodos.get(id);
+    if (!el) continue;
+    const w = anchoFraccion(el);
+    colocar(id, {
+      balda: bal.id,
+      x: Math.min(bal.x1 - w / 2, Math.max(bal.x0 + w / 2, x)),
+      alto: Math.min(sitio(id)?.alto || ALTO_POR_DEFECTO, altoMaximo(bal.id)),
+      z,
+    });
+    x += w + hueco;
+  }
+  resolverSolapes(bal.id);
+  guardar(); pintar();
+}
+
+window.addEventListener('dragover', (e) => {
+  if (!traeArchivos(e)) return;
+  e.preventDefault();   // sin esto, Electron abriría el archivo en la ventana
+  if (!st || Editor.abierto()) return;
+  e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+  marcarDestinoArchivos({ x: e.clientX, y: e.clientY });
+});
+window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) marcarDestinoArchivos(null); });
+window.addEventListener('drop', async (e) => {
+  if (!traeArchivos(e)) return;
+  e.preventDefault();
+  marcarDestinoArchivos(null);
+  if (!st || Editor.abierto()) return;   // el editor tiene su propio soltar
+
+  const rutas = [...e.dataTransfer.files].map((f) => window.estanteria.rutaDe(f)).filter(Boolean);
+  if (!rutas.length) return;
+  const punto = { x: e.clientX, y: e.clientY };
+  const hechas = await window.estanteria.traerArchivos(rutas, e.ctrlKey);
+  if (!hechas.length) return;
+  await sincronizar(await window.estanteria.carpetas());
+  await Promise.all(hechas.map((r) => esperarDibujo(nodos.get(r))));
+  colocarEnPunto(hechas, punto);
+});
+
 // --- Arranque -----------------------------------------------------------
 
 function aplicarModo(nuevo) {
@@ -1717,6 +1946,7 @@ function aplicarModo(nuevo) {
   }
   if (nuevo !== 'editar') {
     $('#paleta').hidden = true;
+    cerrarSelector();
     if (ajustandoBaldas) { ajustandoBaldas = false; document.body.dataset.baldas = '0'; }
     Editor.cerrar();
     seleccionar(null);
@@ -1814,8 +2044,15 @@ async function iniciar() {
   imagenes = datos.imagenes || {};
   carpetas = datos.carpetas || [];
   papeleraLlena = Boolean(datos.papelera);
+  plataforma = datos.plataforma || '';
   st = migrar(datos.estado);
   st.graficos = st.graficos || {};
+  st.apps = st.apps || {};
+  if (plataforma === 'linux') {
+    try {
+      catalogoApps = new Map((await window.estanteria.apps()).map((a) => [a.id, a]));
+    } catch (_) { /* sin catálogo, sin botellas de apps */ }
+  }
   st.color = { ...colorPorDefecto(), ...(st.color || {}) };
   if (!paredes.length) {
     elAviso.hidden = false;
@@ -1895,7 +2132,7 @@ window.estanteria.alCambiarPapelera((llena) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if (Editor.abierto() || !$('#pregunta').hidden) return;
+  if (Editor.abierto() || !$('#pregunta').hidden || selectorAbierto()) return;
   if (e.key === 'Escape' && modo === 'editar') {
     if (seleccion) seleccionar(null);
     else window.estanteria.cambiarModo('fondo');

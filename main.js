@@ -42,6 +42,9 @@ if (process.platform === 'linux' && !process.argv.some((a) => a.startsWith('--oz
 // --- Linux ----------------------------------------------------------------
 
 const ES_LINUX = process.platform === 'linux';
+const linux = ES_LINUX ? require('./linux-lanzar') : null;
+const linuxEscritorio = ES_LINUX ? require('./linux-escritorio') : null;
+const entornoHijos = () => (linux ? linux.entornoLimpio() : process.env);
 
 /** Lanza el primer programa de la lista que exista. Devuelve si alguno arrancó. */
 function lanzarPrimero(opciones, cwd) {
@@ -51,7 +54,7 @@ function lanzarPrimero(opciones, cwd) {
       const [cmd, ...args] = opciones[i];
       let hijo;
       try {
-        hijo = spawn(cmd, args, { cwd, detached: true, stdio: 'ignore' });
+        hijo = spawn(cmd, args, { cwd, detached: true, stdio: 'ignore', env: entornoHijos() });
       } catch (_) { probar(i + 1); return; }
       hijo.once('error', () => probar(i + 1));
       hijo.once('spawn', () => { hijo.unref(); res(true); });
@@ -63,7 +66,7 @@ function lanzarPrimero(opciones, cwd) {
 /** Ejecuta un programa y dice si terminó bien (sin mirar su salida). */
 function ejecutar(cmd, args, timeout = 8000) {
   return new Promise((res) => {
-    execFile(cmd, args, { timeout }, (err) => res(!err));
+    execFile(cmd, args, { timeout, env: entornoHijos() }, (err) => res(!err));
   });
 }
 
@@ -131,7 +134,9 @@ const AJUSTES_POR_DEFECTO = {
   // 'detras' es la que de verdad hace de fondo de pantalla: sin ventana, en el
   // sitio del escritorio. No recibe ratón, así que se lo prestamos nosotros.
   anclaje: 'detras',
-  ocultarIconos: false,
+  // En Linux, la estantería sustituye al escritorio: se apagan sus iconos
+  // mientras está abierta. En Windows es opcional (bandeja).
+  ocultarIconos: process.platform === 'linux',
   // Al instalarla, lo normal es querer que aparezca sola al encender.
   arranque: app.isPackaged,
   prioridad: 'alta',
@@ -297,6 +302,24 @@ async function arranqueAutomatico(activar) {
       + 'se usa el arranque normal de Windows, que tarda unos segundos más.');
   }
   return true;
+}
+
+// --- Iconos del escritorio del sistema -----------------------------------
+
+/**
+ * Enseña u oculta los iconos que dibuja el propio sistema. En Windows es la
+ * ventana SHELLDLL_DefView; en Linux, lo de cada entorno (linux-escritorio.js).
+ * Devuelve true si se pudo, o un texto con cómo hacerlo a mano.
+ */
+function iconosDelSistema(visibles) {
+  if (process.platform === 'win32') return conWinApi('iconosVisibles', visibles) === true;
+  if (linuxEscritorio) {
+    if (visibles) { linuxEscritorio.restaurarIconos(); return true; }
+    const r = linuxEscritorio.ocultarIconos();
+    if (r.ok) console.log(`[estanteria] Iconos del escritorio (${r.entorno}) apagados mientras la estanteria este abierta.`);
+    return r.ok ? true : (r.detalle || false);
+  }
+  return false;
 }
 
 // --- Estado del proceso principal --------------------------------------
@@ -476,7 +499,7 @@ function alEscritorio() {
         clearTimeout(reintento);
         reintento = null;
         if (!win.isVisible()) win.show();
-        if (ajustes.ocultarIconos) conWinApi('iconosVisibles', false);
+        if (ajustes.ocultarIconos) iconosDelSistema(false);
         vigilarCapa(true);
         despertar();
         console.log(`[estanteria] Anclada al escritorio (${ajustes.anclaje}).`);
@@ -769,6 +792,11 @@ function leerCarpetas() {
       }
       if (ACCESOS.includes(ext)) {
         return { ruta: path.join(dir, e.name), nombre: path.basename(e.name, ext), tipo: 'acceso' };
+      }
+      // Sin los iconos del sistema, un archivo suelto no se vería en ningún
+      // sitio: también sale en la estantería.
+      if (ajustes.ocultarIconos && e.isFile()) {
+        return { ruta, nombre: e.name, tipo: 'archivo' };
       }
       return null;
     })
@@ -1110,14 +1138,21 @@ ipcMain.handle('estanteria:imagen', (_e, relativa) => {
 });
 
 ipcMain.handle('estanteria:abrir-ruta', async (_e, ruta) => {
-  if (!ruta || !fs.existsSync(ruta)) return;
-  // Un lanzador de Linux se ejecuta, no se abre en el editor de texto.
-  if (ES_LINUX && ruta.toLowerCase().endsWith('.desktop')) {
-    if (await ejecutar('gio', ['launch', ruta])) return;
-    if (await lanzarPrimero([['gtk-launch', path.basename(ruta, '.desktop')]])) return;
+  if (!ruta) return false;
+  try { fs.lstatSync(ruta); } catch (_) { return false; }
+  // En Linux, lanzador propio: directo y con el entorno de tu sesión (ver
+  // linux-lanzar.js). shell.openPath pasaba por xdg-open con el entorno que
+  // deja Electron, y eso era lo que hacía tardar tanto.
+  if (linux) {
+    try {
+      if (await linux.abrir(ruta)) return true;
+    } catch (err) {
+      contarError('No se pudo abrir', err);
+    }
   }
   const err = await shell.openPath(ruta);
   if (err) console.warn('[estanteria] No se pudo abrir:', ruta, err);
+  return !err;
 });
 
 ipcMain.handle('estanteria:crear-carpeta', (_e, nombre) => {
@@ -1406,6 +1441,46 @@ ipcMain.handle('estanteria:tirar-carpeta', async (_e, ruta) => {
 
 ipcMain.handle('estanteria:carpetas', () => leerCarpetas());
 
+/** Aplicaciones instaladas (solo Linux): lo que sale en el menú del sistema. */
+ipcMain.handle('estanteria:apps', (_e, refrescar) => (linux ? linux.listarApps(app.getLocale(), Boolean(refrescar)) : []));
+
+/**
+ * Archivos soltados sobre la estantería desde el gestor de archivos: pasan al
+ * escritorio, como cuando se sueltan sobre el escritorio de siempre. Se
+ * mueven si vienen del mismo disco y se copian si no (o si se pide copiar).
+ */
+ipcMain.handle('estanteria:traer-archivos', (_e, rutas, copiar) => {
+  const escritorio = path.resolve(dirEscritorio());
+  const hechas = [];
+  for (const origen of (Array.isArray(rutas) ? rutas : []).filter((r) => typeof r === 'string')) {
+    try {
+      const st = fs.lstatSync(origen);
+      const dir = path.resolve(path.dirname(origen));
+      if (dir === escritorio) { hechas.push(origen); continue; }   // ya estaba
+      if (st.isDirectory() && (escritorio + path.sep).startsWith(path.resolve(origen) + path.sep)) continue;
+      const ext = st.isDirectory() ? '' : path.extname(origen);
+      const destino = path.join(escritorio, nombreLibreCarpeta(path.basename(origen, ext), ext));
+      if (copiar) {
+        fs.cpSync(origen, destino, { recursive: true, verbatimSymlinks: true });
+      } else {
+        try {
+          fs.renameSync(origen, destino);
+        } catch (err) {
+          if (err.code !== 'EXDEV') throw err;
+          // Otro disco: se copia y se borra el original, como hace el gestor de archivos.
+          fs.cpSync(origen, destino, { recursive: true, verbatimSymlinks: true });
+          fs.rmSync(origen, { recursive: true, force: true });
+        }
+      }
+      hechas.push(destino);
+    } catch (err) {
+      console.error('[estanteria] No se pudo traer:', origen, err.message);
+    }
+  }
+  setTimeout(() => avisarCarpetas(true), 60);
+  return hechas;
+});
+
 ipcMain.handle('estanteria:abrir-carpeta', () => {
   fs.mkdirSync(DIR_PACK, { recursive: true });
   shell.openPath(DIR_PACK);
@@ -1499,16 +1574,25 @@ function actualizarMenuBandeja() {
       ],
     },
     {
-      label: 'Ocultar los iconos de Windows',
+      label: ES_LINUX ? 'Sustituir el escritorio' : 'Ocultar los iconos de Windows',
+      sublabel: ES_LINUX ? 'Quita los iconos del sistema; tus archivos salen en la estantería' : undefined,
       type: 'checkbox',
       checked: ajustes.ocultarIconos,
-      enabled: process.platform === 'win32',
+      enabled: process.platform === 'win32' || ES_LINUX,
       click: (item) => {
         ajustes.ocultarIconos = item.checked;
         guardarAjustes();
-        if (conWinApi('iconosVisibles', !item.checked) !== true) {
-          dialog.showMessageBox({ type: 'warning', message: 'No se encontró la capa de iconos',
-            detail: 'Puede hacerse a mano: clic derecho en el escritorio → Ver → Mostrar iconos del escritorio.' });
+        const r = iconosDelSistema(!item.checked);
+        // Con los iconos del sistema quitados, los archivos sueltos del
+        // escritorio pasan a la estantería para no perderlos de vista.
+        avisarCarpetas(true);
+        if (r !== true) {
+          dialog.showMessageBox({
+            type: 'warning',
+            message: 'No se pudieron quitar los iconos del escritorio',
+            detail: typeof r === 'string' ? r
+              : 'Puede hacerse a mano: clic derecho en el escritorio → Ver → Mostrar iconos del escritorio.',
+          });
         }
       },
     },
@@ -1538,7 +1622,7 @@ function actualizarMenuBandeja() {
     },
     { type: 'separator' },
     { label: 'Comprobar el estado…', click: mostrarEstado },
-    { label: 'Abrir el escritorio', click: () => shell.openPath(dirEscritorio()) },
+    { label: 'Abrir el escritorio', click: () => (linux ? linux.abrir(dirEscritorio()) : shell.openPath(dirEscritorio())) },
     { label: 'Abrir el pack de botellas', click: () => { fs.mkdirSync(DIR_PACK, { recursive: true }); shell.openPath(DIR_PACK); } },
     { label: 'Recargar', click: () => win.webContents.send('estanteria:recargar') },
     { type: 'separator' },
@@ -1576,7 +1660,7 @@ function mostrarEstado() {
     raton ? `Ventana bajo el cursor: ${si(raton.bajoCursor)}` : null,
     raton ? `Ventana en primer plano: ${si(raton.primerPlano)}` : null,
     raton && raton.fallos?.length ? `Fallos: ${raton.fallos.join(' | ')}` : null,
-    `Iconos de Windows ocultos: ${si(ajustes.ocultarIconos)}`,
+    `${ES_LINUX ? 'Sustituye al escritorio' : 'Iconos de Windows ocultos'}: ${si(ajustes.ocultarIconos)}`,
     `Modo actual: ${modo}`,
   ].filter(Boolean);
 
@@ -1625,9 +1709,18 @@ if (!app.requestSingleInstanceLock()) {
     // Hay distribuciones sin carpeta Escritorio hasta que se crea algo en ella.
     try { fs.mkdirSync(dirEscritorio(), { recursive: true }); } catch (_) { /* nada */ }
 
+    if (linuxEscritorio) {
+      linuxEscritorio.configurar({ env: entornoHijos(), dirDatos: app.getPath('userData') });
+      // Si la última vez se cerró de golpe, los iconos siguen apagados: se
+      // restauran, y si toca sustituir el escritorio se vuelven a apagar.
+      linuxEscritorio.restaurarIconos();
+      if (ajustes.ocultarIconos) iconosDelSistema(false);
+    }
+
     crearVentana();
     crearBandeja();
     vigilarEscritorio();
+    linux?.precalentar();
     avisarPapelera();
 
     globalShortcut.register('CommandOrControl+Alt+E', () => {
@@ -1651,11 +1744,15 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => { if (app.saliendo) app.quit(); });
+  // Al cerrar sesión o apagar, Linux manda SIGTERM: también se deja todo como estaba.
+  for (const senal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+    process.on(senal, () => { app.saliendo = true; app.quit(); });
+  }
   app.on('will-quit', () => {
     clearTimeout(reintento);
     clearInterval(repaso);
     // Nunca dejamos el escritorio peor de como lo encontramos.
-    if (ajustes.ocultarIconos) conWinApi('iconosVisibles', true);
+    if (ajustes.ocultarIconos) iconosDelSistema(true);
     clearInterval(relojCapa);
     clearInterval(reloj);
     clearTimeout(avisoPendiente);

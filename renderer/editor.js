@@ -41,7 +41,7 @@ const Editor = (() => {
           <label class="campo">
             <span>Nombre</span>
             <input id="ed-nombre" type="text" maxlength="60" placeholder="Sin nombre">
-            <small class="solo-botella">Cambiarlo renombra la carpeta del escritorio.</small>
+            <small class="solo-botella" id="ed-nombre-ayuda">Cambiarlo renombra la carpeta del escritorio.</small>
           </label>
 
           <div class="campo solo-poster">
@@ -442,6 +442,12 @@ const Editor = (() => {
     }
 
     el.nombre.value = borrador.nombre || '';
+    const ayuda = el.raiz.querySelector('#ed-nombre-ayuda');
+    if (ayuda) {
+      ayuda.textContent = String(borrador.id || '').startsWith('app:')
+        ? 'Es el nombre en la estantería; la aplicación no cambia.'
+        : 'Cambiarlo renombra el elemento en el escritorio.';
+    }
     el.eliminar.hidden = !opciones.alEliminar;
     el.guardar.textContent = opciones.esNueva ? 'Crear' : 'Guardar';
     pintarRuta();

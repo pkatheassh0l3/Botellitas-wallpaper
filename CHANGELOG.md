@@ -6,6 +6,11 @@ Versiones: [SemVer](https://semver.org/lang/es/).
 ## [Sin publicar]
 
 ### Añadido
+- **Linux: la estantería sustituye al escritorio.** Mientras está abierta se apagan los iconos del escritorio de GNOME/Ubuntu, XFCE, Cinnamon y MATE, y al cerrarla se restauran (también tras un cierre brusco). En KDE se indica cómo hacerlo a mano. Se activa en la bandeja, en «Sustituir el escritorio».
+- **Linux: apps instaladas en las baldas.** Clic derecho → Nuevo → Aplicación… abre un buscador con todas las apps del sistema, incluidas Flatpak y Snap. No crea nada en el Escritorio, y quitar una app de la estantería no la desinstala.
+- Soltar archivos desde el gestor de archivos sobre una balda los mueve al Escritorio (con Ctrl, los copia) y la botella aparece donde se sueltan.
+- Con los iconos del sistema ocultos, los archivos sueltos del Escritorio también salen como botellas.
+- La botella da un saltito al abrirla.
 - **Linux**: AppImage y paquete `.deb`. Fondo de escritorio de verdad (ventana de tipo escritorio en X11 y XWayland), arranque al iniciar sesión (`~/.config/autostart`), papelera del sistema, lanzadores `.desktop` y enlaces simbólicos como botellas, y los ajustes de pantalla, fondo y terminal de GNOME, KDE, XFCE, Cinnamon y MATE.
 - Las actions construyen también la versión de Linux.
 
@@ -14,6 +19,8 @@ Versiones: [SemVer](https://semver.org/lang/es/).
 - Las botellas se pueden arrastrar de una balda a otra sin entrar en el modo edición. Un clic o doble clic sigue abriendo la carpeta; solo se mueven al arrastrar más de unos píxeles.
 
 ### Corregido
+- En Linux, abrir una botella tardaba mucho: las apps heredaban el entorno que modifica Electron (escritorio «Unity», X11 forzado). Ahora se restaura el entorno de la sesión y el programa se lanza directamente; a partir de la segunda vez, abrir tarda alrededor de 1 ms.
+- El panel de una botella mostraba también el giro y el grosor, que son solo de pósters y libros.
 - Con resoluciones por encima de 1080p (y escalado de pantalla) el fondo salía a medio tamaño en una esquina en Windows. Ahora el tamaño se pide a Windows en píxeles reales.
 - Con escalado de pantalla, los clics prestados en la capa «Detrás de los iconos» miraban otro punto de la pantalla.
 - Al encender el ordenador ya no se abre el modo edición: se ignoran las copias que lanza Windows al iniciar sesión, «Como ventana» ya no se queda guardada, y mientras espera al Explorador no se pone delante de las demás ventanas.

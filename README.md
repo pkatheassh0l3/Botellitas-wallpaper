@@ -32,6 +32,20 @@ permiso de ejecución y ábrelo) o el `.deb` (Debian, Ubuntu, Mint, Pop!_OS…:
   `/usr/share/applications` para elegir una aplicación.
 - **Arranque al iniciar sesión.** Deja un `estanteria.desktop` en
   `~/.config/autostart`; se quita desmarcando la opción en la bandeja.
+- **Sustituir el escritorio.** Mientras está abierta, la estantería ES el
+  escritorio: se apagan los iconos del sistema (GNOME/Ubuntu, XFCE, Cinnamon,
+  MATE) y al cerrarla vuelven tal cual estaban, incluso si se cerró de golpe.
+  Tus archivos sueltos del Escritorio salen como botellas. En KDE Plasma hay que
+  hacerlo a mano: clic derecho en el escritorio → *Configurar el escritorio y el
+  fondo* → Diseño: *Escritorio*. Se activa y desactiva en la bandeja.
+- **Apps instaladas.** Clic derecho → *Nuevo → Aplicación…* abre un buscador con
+  todas las apps del sistema (también Flatpak y Snap). Escribe y pulsa Intro. No
+  crea nada en el Escritorio y quitarla de la estantería no la desinstala.
+- **Soltar archivos.** Arrastra archivos o carpetas desde el gestor de archivos
+  a una balda: se mueven al Escritorio (con **Ctrl**, se copian) y la botella
+  aparece donde los sueltas.
+- **Abrir rápido.** Las apps se lanzan directamente con el entorno de tu sesión
+  (`linux-lanzar.js`), sin pasar por `xdg-open`.
 
 
 ## Empezar
@@ -572,6 +586,8 @@ están en el apartado **Artifacts** de esa ejecución, durante 30 días.
 main.js               capas, carpetas del escritorio, cursor, bandeja y diálogos
 preload.js            puente IPC (contextIsolation activado)
 win-wallpaper.js      anclaje a Progman / WorkerW en Windows
+linux-lanzar.js       abrir carpetas, archivos y apps en Linux, deprisa
+linux-escritorio.js   apagar y restaurar los iconos del escritorio en Linux
 renderer/botellas.js  botellas y lomos de libro, como SVG, con el texto vertical
 renderer/carteles.js  pósters y estilos de marco
 renderer/editor.js    editor de botellas y de pósters

@@ -1,6 +1,6 @@
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('estanteria', {
   cargar: () => ipcRenderer.invoke('estanteria:cargar'),
@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('estanteria', {
   guardarImagen: (nombre, datos) => ipcRenderer.invoke('estanteria:guardar-imagen', nombre, datos),
   abrirRuta: (ruta) => ipcRenderer.invoke('estanteria:abrir-ruta', ruta),
   carpetas: () => ipcRenderer.invoke('estanteria:carpetas'),
+  apps: (refrescar) => ipcRenderer.invoke('estanteria:apps', refrescar),
+  traerArchivos: (rutas, copiar) => ipcRenderer.invoke('estanteria:traer-archivos', rutas, copiar),
+  // La ruta real de un archivo soltado desde el gestor de archivos.
+  rutaDe: (archivo) => { try { return webUtils.getPathForFile(archivo); } catch (_) { return archivo?.path || ''; } },
   imagen: (ruta) => ipcRenderer.invoke('estanteria:imagen', ruta),
   crearCarpeta: (nombre) => ipcRenderer.invoke('estanteria:crear-carpeta', nombre),
   renombrarCarpeta: (ruta, nombre) => ipcRenderer.invoke('estanteria:renombrar-carpeta', ruta, nombre),
