@@ -90,6 +90,31 @@ const MapWindowPoints = RECT
   ? declarar('MapWindowPoints', 'int', [HWND, HWND, koffi.inout(koffi.pointer(RECT)), 'uint32_t']) : null;
 const MONITOR_DEFAULTTOPRIMARY = 1;
 
+const GetWindowRect = RECT ? declarar('GetWindowRect', 'bool', [HWND, koffi.out(koffi.pointer(RECT))]) : null;
+
+/* Todas las medidas, en píxeles REALES. Windows decide en qué unidades contesta
+   según la "conciencia de escala" del hilo que pregunta: si el hilo no está en
+   modo por monitor (PMv2), con el escalado al 125 %/150 % devuelve medidas
+   reducidas y la estantería se quedaba más pequeña que la pantalla, con el
+   fondo de Windows asomando por los bordes. Cada llamada se hace en PMv2. */
+const SetThreadDpiAwarenessContext = declarar('SetThreadDpiAwarenessContext', 'intptr_t', ['intptr_t']);
+const DPI_PMV2 = -4;   // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+
+function enPixelesReales(fn) {
+  let antes = 0;
+  try { antes = SetThreadDpiAwarenessContext ? SetThreadDpiAwarenessContext(DPI_PMV2) : 0; } catch (_) { antes = 0; }
+  try {
+    return fn();
+  } finally {
+    if (antes) { try { SetThreadDpiAwarenessContext(antes); } catch (_) { /* nada */ } }
+  }
+}
+
+// Para las capas por encima de otras (Windows 11 24H2, ver anclar()).
+const SetLayeredWindowAttributes = declarar('SetLayeredWindowAttributes', 'bool', [HWND, 'uint32_t', 'uint8_t', 'uint32_t']);
+const WS_EX_LAYERED = 0x00080000;
+const LWA_ALPHA = 0x2;
+
 if (fallos.length) console.warn('[estanteria] Raton prestado, funciones no disponibles:', fallos.join(' | '));
 
 // GetWindowLongPtrW solo existe en 64 bits; en 32 se llama GetWindowLongW.
@@ -176,6 +201,30 @@ function buscarWorkerW(progman) {
   return 0;
 }
 
+/**
+ * Windows 11 24H2 cambió el escritorio otra vez: la WorkerW del fondo ya no es
+ * una ventana suelta sino HIJA de Progman, por debajo de los iconos:
+ *
+ *   Progman -> SHELLDLL_DefView (iconos)
+ *           -> WorkerW (fondo de pantalla)
+ *
+ * Ahí hay que colgarse de Progman y meterse ENTRE los iconos y el fondo.
+ * Devuelve {defView, workerw} si el escritorio es así, o null.
+ */
+function escritorio24H2(progman) {
+  const workerw = FindWindowExW(progman, 0, 'WorkerW', null);
+  if (!workerw) return null;
+  return { defView: FindWindowExW(progman, 0, 'SHELLDLL_DefView', null), workerw };
+}
+
+/** Qué ventana va justo encima de la nuestra, según la capa y el escritorio. */
+function encimaDe(capa) {
+  if (capa !== 'detras') return HWND_TOP;
+  // En 24H2, justo debajo de los iconos (y por tanto encima del fondo).
+  if (ultimo && ultimo.h24 && ultimo.h24.defView) return ultimo.h24.defView;
+  return HWND_BOTTOM;
+}
+
 /** La ventana con los iconos, que cuelga de Progman o de una WorkerW. */
 function buscarIconos() {
   const progman = FindWindowW('Progman', null);
@@ -203,6 +252,10 @@ function noActivar(win, si) {
 /** Rectángulo del monitor principal en píxeles físicos de pantalla. */
 function monitorPrincipal() {
   if (!MonitorFromPoint || !GetMonitorInfoW) return null;
+  return enPixelesReales(() => monitorPrincipalCrudo());
+}
+
+function monitorPrincipalCrudo() {
   try {
     // El principal es, por definición, el que contiene el punto (0, 0).
     const hmon = MonitorFromPoint({ x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
@@ -225,7 +278,11 @@ function monitorPrincipal() {
  * Progman), que cubre todas las pantallas y tiene su propio origen.
  */
 function cajaEnPadre(padre) {
-  const r = monitorPrincipal();
+  return enPixelesReales(() => cajaEnPadreCruda(padre));
+}
+
+function cajaEnPadreCruda(padre) {
+  const r = monitorPrincipalCrudo();
   if (!r || !MapWindowPoints) return null;
   try {
     const rel = { ...r };
@@ -253,6 +310,7 @@ function anclar(win, capa, respaldo) {
   if (!progman) throw new Error('No se encontró la ventana Progman del escritorio');
 
   const workerw = buscarWorkerW(progman);
+  const h24 = capa === 'detras' && !workerw ? escritorio24H2(progman) : null;
 
   // Si no hay WorkerW, colgarse de Progman y quedarse abajo del todo deja la
   // ventana igualmente por debajo de los iconos: sirve como plan B.
@@ -261,17 +319,50 @@ function anclar(win, capa, respaldo) {
   noActivar(win, true);
   EnableWindow(hwnd, true);   // sin esto no llegaría ni un clic
 
+  // En 24H2 Progman compone a sus hijas con DirectComposition y solo pinta
+  // bien las que son "layered". Opaca del todo: no cambia nada a la vista.
+  if (h24 && SetLayeredWindowAttributes) {
+    const estilo = Number(GetExStyle(hwnd, GWL_EXSTYLE));
+    SetExStyle(hwnd, GWL_EXSTYLE, estilo | WS_EX_LAYERED);
+    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+  }
+
   // Ya somos ventana hija: las coordenadas pasan a ser relativas al padre.
   const caja = cajaEnPadre(destino) || respaldo;
-  ultimo = { destino, capa, caja };
-  SetWindowPos(
-    hwnd,
-    capa === 'detras' ? HWND_BOTTOM : HWND_TOP,
-    caja.x, caja.y, caja.w, caja.h,
-    SWP_NOACTIVATE | SWP_SHOWWINDOW,
-  );
+  ultimo = { destino, capa, caja, h24, forzada: null };
+  colocarCaja(hwnd, caja, SWP_NOACTIVATE | SWP_SHOWWINDOW);
   ShowWindow(hwnd, SW_SHOWNOACTIVATE);
   return caja;
+}
+
+/** SetWindowPos en píxeles reales y con el orden que toca. */
+function colocarCaja(hwnd, caja, banderas, menos = 0) {
+  enPixelesReales(() => SetWindowPos(
+    hwnd, encimaDe(ultimo ? ultimo.capa : 'detras'),
+    caja.x, caja.y, caja.w, caja.h - menos, banderas,
+  ));
+}
+
+/** Medida real de la ventana en pantalla, en píxeles reales. */
+function medidaReal(win) {
+  if (!GetWindowRect) return null;
+  return enPixelesReales(() => {
+    const r = {};
+    if (!GetWindowRect(hwndDe(win), r)) return null;
+    return { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top };
+  });
+}
+
+/**
+ * Corrige el tamaño si al comprobarlo no cuadra con la pantalla: se usa la
+ * caja que se pase en adelante, en vez de la calculada.
+ */
+function forzarCaja(win, caja) {
+  if (!ultimo || !caja) return false;
+  ultimo.forzada = caja;
+  ultimo.caja = caja;
+  colocarCaja(hwndDe(win), caja, SWP_NOACTIVATE);
+  return true;
 }
 
 /**
@@ -281,14 +372,9 @@ function anclar(win, capa, respaldo) {
  */
 function ajustar(win, encoger = false) {
   if (!ultimo) return false;
-  const caja = cajaEnPadre(ultimo.destino) || ultimo.caja;
+  const caja = ultimo.forzada || cajaEnPadre(ultimo.destino) || ultimo.caja;
   ultimo.caja = caja;
-  SetWindowPos(
-    hwndDe(win),
-    ultimo.capa === 'detras' ? HWND_BOTTOM : HWND_TOP,
-    caja.x, caja.y, caja.w, caja.h - (encoger ? 1 : 0),
-    SWP_NOACTIVATE,
-  );
+  colocarCaja(hwndDe(win), caja, SWP_NOACTIVATE, encoger ? 1 : 0);
   return true;
 }
 
@@ -319,12 +405,8 @@ function bajarAlFondo(win) {
 /** Vuelve a colocarla en su sitio dentro del escritorio (por si el shell la tapó). */
 function reponer(win, capa) {
   const hwnd = hwndDe(win);
-  SetWindowPos(
-    hwnd,
-    capa === 'detras' ? HWND_BOTTOM : HWND_TOP,
-    0, 0, 0, 0,
-    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-  );
+  const tras = ultimo && ultimo.capa === capa ? encimaDe(capa) : (capa === 'detras' ? HWND_BOTTOM : HWND_TOP);
+  SetWindowPos(hwnd, tras, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 /**
@@ -390,7 +472,8 @@ function enElEscritorio(punto, win) {
   const nuestro = win ? hwndDe(win) : 0;
 
   if (WindowFromPoint && punto) {
-    return esDelEscritorio(WindowFromPoint({ x: Math.round(punto.x), y: Math.round(punto.y) }), nuestro);
+    const bajo = enPixelesReales(() => WindowFromPoint({ x: Math.round(punto.x), y: Math.round(punto.y) }));
+    return esDelEscritorio(bajo, nuestro);
   }
   if (GetForegroundWindow) return esDelEscritorio(GetForegroundWindow(), nuestro);
   return false;
@@ -408,6 +491,9 @@ function diagnosticoEscritorio() {
     elegida: progman ? Boolean(buscarWorkerW(progman)) : false,
     monitor: monitorPrincipal(),
     caja: ultimo ? ultimo.caja : null,
+    win24H2: progman ? Boolean(!listaWorkerW().length && escritorio24H2(progman)) : false,
+    capa24H2: Boolean(ultimo && ultimo.h24),
+    forzada: Boolean(ultimo && ultimo.forzada),
   };
 }
 
@@ -422,12 +508,14 @@ function estadoRaton() {
 }
 
 // Sirve para detectar un archivo desactualizado tras una actualización a medias.
-const VERSION = 6;
+const VERSION = 7;
 
 module.exports = {
   VERSION,
   anclar,
   ajustar,
+  medidaReal,
+  forzarCaja,
   soltar,
   reponer,
   noActivar,

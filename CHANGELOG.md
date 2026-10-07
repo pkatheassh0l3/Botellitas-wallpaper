@@ -19,6 +19,8 @@ Versiones: [SemVer](https://semver.org/lang/es/).
 - Las botellas se pueden arrastrar de una balda a otra sin entrar en el modo edición. Un clic o doble clic sigue abriendo la carpeta; solo se mueven al arrastrar más de unos píxeles.
 
 ### Corregido
+- En Windows con escalado de pantalla (125 %, 150 %…) la estantería podía quedar más pequeña que la pantalla, con el fondo de Windows asomando por los bordes. Ahora las medidas se piden a Windows en píxeles reales, la app comprueba tras anclarse que ocupa toda la pantalla (y se corrige sola si no) y apunta las medidas en `errores.log`.
+- Compatibilidad con el escritorio de Windows 11 24H2, donde la capa del fondo cambió de sitio.
 - En Linux, abrir una botella tardaba mucho: las apps heredaban el entorno que modifica Electron (escritorio «Unity», X11 forzado). Ahora se restaura el entorno de la sesión y el programa se lanza directamente; a partir de la segunda vez, abrir tarda alrededor de 1 ms.
 - El panel de una botella mostraba también el giro y el grosor, que son solo de pósters y libros.
 - Con resoluciones por encima de 1080p (y escalado de pantalla) el fondo salía a medio tamaño en una esquina en Windows. Ahora el tamaño se pide a Windows en píxeles reales.

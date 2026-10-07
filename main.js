@@ -329,7 +329,7 @@ let tray = null;
 let modo = 'fondo';        // 'fondo' | 'editar'
 let anclada = false;
 let winApi = null;         // helper nativo de Windows
-const WIN_API_ESPERADA = 6;
+const WIN_API_ESPERADA = 7;
 
 /**
  * Carga el ayudante nativo una sola vez y comprueba que trae lo que esperamos.
@@ -588,6 +588,9 @@ function despertar() {
       conWinApi('ajustar', win, false);
       win.webContents.invalidate?.();
       avisarMedidas();
+      // Y se comprueba que de verdad ocupa la pantalla entera.
+      clearTimeout(relojComprobar);
+      relojComprobar = setTimeout(() => comprobarTamano(0), 500);
     }, 40);
     return;
   }
@@ -601,6 +604,67 @@ function despertar() {
       avisarMedidas();
     }
   }, 40);
+}
+
+/* --- Comprobar que ocupa toda la pantalla (Windows) ---------------------
+
+   Después de anclarla se mide de verdad: la ventana según Windows y lo que
+   pinta Chromium dentro. Si no cuadran con la pantalla, se corrige sola. Las
+   medidas quedan en errores.log, para poder saber qué pasó en cada equipo. */
+
+let relojComprobar = null;
+let ultimaMedida = null;
+
+const cuadra = (a, b) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= Math.max(3, b * 0.01);
+
+async function comprobarTamano(intento) {
+  if (!win || win.isDestroyed() || !anclada || process.platform !== 'win32') return;
+
+  const d = screen.getPrimaryDisplay();
+  // Lo que mide la pantalla en píxeles reales según Electron (que es quien pinta).
+  const pantalla = { w: Math.round(d.size.width * d.scaleFactor), h: Math.round(d.size.height * d.scaleFactor) };
+  const real = conWinApi('medidaReal', win);
+  let vista = null;
+  try {
+    const [w, h, dpr] = await win.webContents.executeJavaScript('[innerWidth, innerHeight, devicePixelRatio]');
+    vista = { w: Math.round(w * dpr), h: Math.round(h * dpr), escala: dpr };
+  } catch (_) { /* aún cargando */ }
+
+  ultimaMedida = { pantalla, real, vista, escala: d.scaleFactor, intento, cuando: new Date().toISOString() };
+  const texto = `pantalla ${pantalla.w}x${pantalla.h} (escala ${Math.round(d.scaleFactor * 100)} %), `
+    + `ventana ${real ? `${real.w}x${real.h} en ${real.x},${real.y}` : '¿?'}, `
+    + `contenido ${vista ? `${vista.w}x${vista.h}` : '¿?'}`;
+
+  // 1) La ventana no mide lo que la pantalla: Windows nos dio medidas en otras
+  //    unidades. Se fuerza el tamaño que conoce Electron.
+  if (real && (!cuadra(real.w, pantalla.w) || !cuadra(real.h, pantalla.h))) {
+    contarError('Tamaño corregido', new Error(texto));
+    const actual = conWinApi('diagnosticoEscritorio')?.caja || { x: 0, y: 0, w: real.w, h: real.h };
+    const k = actual.w ? pantalla.w / actual.w : 1;
+    conWinApi('forzarCaja', win, {
+      x: Math.round(actual.x * k), y: Math.round(actual.y * k), w: pantalla.w, h: pantalla.h,
+    });
+    if (intento < 2) relojComprobar = setTimeout(() => comprobarTamano(intento + 1), 500);
+    return;
+  }
+
+  // 2) La ventana está bien pero Chromium sigue pintando al tamaño viejo: se
+  //    le da un empujón para que se entere.
+  if (vista && real && (!cuadra(vista.w, real.w) || !cuadra(vista.h, real.h))) {
+    if (intento === 0) contarError('Contenido sin redimensionar', new Error(texto));
+    if (intento < 3) {
+      conWinApi('ajustar', win, true);
+      setTimeout(() => {
+        if (!win || win.isDestroyed()) return;
+        conWinApi('ajustar', win, false);
+        win.webContents.invalidate?.();
+        win.webContents.send('estanteria:medir');
+      }, 60);
+      relojComprobar = setTimeout(() => comprobarTamano(intento + 1), 700);
+    }
+    return;
+  }
+  if (intento > 0) console.log(`[estanteria] Tamaño correcto tras corregir: ${texto}`);
 }
 
 /** La pantalla principal entera, en píxeles lógicos (lo que usa Electron). */
@@ -1655,6 +1719,12 @@ function mostrarEstado() {
     esc && esc.caja ? `Tamaño de la estantería: ${esc.caja.w}×${esc.caja.h} en (${esc.caja.x}, ${esc.caja.y})` : null,
     `Pantalla según Electron: ${screen.getPrimaryDisplay().size.width}×${screen.getPrimaryDisplay().size.height} `
       + `a escala ${Math.round(screen.getPrimaryDisplay().scaleFactor * 100)} %`,
+    process.platform === 'win32' ? `Windows ${os.release()}${esc && esc.win24H2 ? ' (escritorio de 24H2)' : ''}` : null,
+    (() => {
+      const r = conWinApi('medidaReal', win);
+      return r ? `Ventana real: ${r.w}×${r.h} en (${r.x}, ${r.y})${esc && esc.forzada ? ' · tamaño corregido' : ''}` : null;
+    })(),
+    ultimaMedida && ultimaMedida.vista ? `Contenido pintado: ${ultimaMedida.vista.w}×${ultimaMedida.vista.h}` : null,
     ES_LINUX ? `Sesión: ${process.env.XDG_SESSION_TYPE || '¿?'} · Escritorio: ${process.env.XDG_CURRENT_DESKTOP || '¿?'}` : null,
     raton ? `Lectura de botones: ${si(raton.botones)}` : null,
     raton ? `Ventana bajo el cursor: ${si(raton.bajoCursor)}` : null,
@@ -1750,6 +1820,7 @@ if (!app.requestSingleInstanceLock()) {
   }
   app.on('will-quit', () => {
     clearTimeout(reintento);
+    clearTimeout(relojComprobar);
     clearInterval(repaso);
     // Nunca dejamos el escritorio peor de como lo encontramos.
     if (ajustes.ocultarIconos) iconosDelSistema(true);
